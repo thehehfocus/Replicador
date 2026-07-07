@@ -1,8 +1,8 @@
 [package]
-name = "thehfocus/Replicador"
+name = "thehehfocus/replicador"
 description = "Simple library for replication structure."
 
-authors = ["thehfocus"]
+authors = ["thehehfocus"]
 
 license = "MIT"
 version = "0.1.0"
