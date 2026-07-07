@@ -143,6 +143,9 @@ export type ClientClass<T> = {
 	Data: T,
 	Tags: {string},
 	
+	--[[
+		Whether the Object is being replicated.
+	]]
 	Active: boolean?,
 	
 	Get: (self: ClientClass<T>, Path: PathType, IgnoreLast: number?) -> any,
@@ -151,10 +154,23 @@ export type ClientClass<T> = {
 	SignalDestroyed: Signal.Signal<ClientClass<T>>,
 	SignalMessage: Signal.Signal<any, boolean>,
 	
+	--[[
+		Send messages to server, as long as Object is active.
+	]]
 	Message: (self: ClientClass<T>, Message: any, Unreliable: boolean?) -> (),
+	--[[
+		Listen messages from server, as long as Object is active.
+	]]
 	OnMessage: (self: ClientClass<T>, Callback: (Message: any) -> (), Unreliable: boolean?) -> Signal.Connection,
 	
+	--[[
+		Listen to any changes related to the path.
+	]]
 	OnChange: (self: ClientClass<T>, Path: PathType, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
+	
+	--[[
+		Listen to only changes on this path.	
+	]]
 	OnSet: (self: ClientClass<T>, Path: PathType, Callback: (Value: any) -> ()) -> Signal.Connection,
 }
 
@@ -173,11 +189,17 @@ export type ServerClass<T, Children = {}> = {
 	Data: T,
 	Tags: {string},
 	
+	--[[
+		Whether the object is not destroyed.
+	]]
 	Active: boolean?,
 	
+	--[[
+		Replication settings.
+	]]
 	IncludeList: {[Player]: boolean},
 	ExcludeList: {[Player]: boolean},
-	
+
 	Parent: any?,
 	Children: Children,
 	
@@ -189,6 +211,9 @@ export type ServerClass<T, Children = {}> = {
 	SetValues: (self: ServerClass<T, Children>, Path: PathType, Values: {[PathType]: any}) -> (),
 	Get: (self: ServerClass<T, Children>, Path: PathType, IgnoreLast: number?) -> any,
 	
+	--[[
+		Returns a shallow table proxy which intercepts reads/writes, applying changes at the given path.
+	]]
 	GetShallowProxy: (
 		<A>(self: ServerClass<T, Children>, Path: PathType?, TypeofValue: A) -> ProxyType & A
 	) & (
@@ -197,20 +222,40 @@ export type ServerClass<T, Children = {}> = {
 		(self: ServerClass<T, Children>) -> ProxyType & T
 	),
 	
+	--[[
+		Assigns child Objects, which copy replication properties of the parent.
+	]]
 	AssignChildren: (self: ServerClass<T, Children>, ChildMap: {[string]: any}) -> (),
 	
 	Insert: (self: ServerClass<T, Children>, Path: PathType, Value: any, Index: number?) -> (),
 	Remove: (self: ServerClass<T, Children>, Path: PathType, Index: number?) -> (),
 	
+	--[[
+		Replicates the Object to all Ready Players.
+		Clears the Include/Exclude lists.
+	]]
 	Replicate: (self: ServerClass<T, Children>) -> ServerClass<T, Children>,
+	--[[
+		Subscribes the specific player to the Object replication.
+	]]
 	Subscribe: (self: ServerClass<T, Children>, Player: Player) -> ServerClass<T, Children>,
+	
 	Unreplicate: (self: ServerClass<T, Children>) -> (),
 	Unsubscribe: (self: ServerClass<T, Children>, Player: Player) -> (),
 	
+	--[[
+		Send a message to all replicated clients.
+	]]
 	Message: (self: ServerClass<T, Children>, Message: any, Player: Player?, Unreliable: boolean?) -> (),
+	--[[
+		Listen to the messages of any of the replicated clients.
+	]]
 	OnMessage: (self: ServerClass<T, Children>, Callback: (Player: Player, Message: any) -> (), Player: Player?, Unreliable: boolean?) -> Signal.Connection,
 	
 	IterateTargets: (self: ServerClass<T, Children>, Callback: (Player: Player) -> ()) -> (),
+	--[[
+		Clears the replica and removes replication.
+	]]
 	Destroy: (self: ServerClass<T, Children>) -> (),
 }
 
