@@ -1,0 +1,14 @@
+[package]
+name = "thehfocus/Replicador"
+description = "Simple library for replication structure."
+
+authors = ["thehfocus"]
+
+license = "MIT"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+
+realm = "shared"
+exclude = ["rokit.toml", ".vscode"]
+
+[dependencies]
