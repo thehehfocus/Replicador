@@ -1,11 +1,14 @@
 --!strict
 const Shared = {}
 
--- CONFIG
+-- Config
+
+-- Change these if you have ByteNetMax.
 --const Packages = game:GetService("ReplicatedStorage"):WaitForChild("Packages")
 const BytenetMax = nil::any --require(Packages.ByteNetMax)
 const IdType = BytenetMax.uint16
 
+-- Wrapper for remotes.
 const RemoteWrapper = require("./RemoteWrapper")
 const Signal = require("./Signal")
 
