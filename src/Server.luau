@@ -33,7 +33,6 @@ Class.__index = function(self, Key)
 		self[Key] = newTable
 		return newTable
 	elseif table.find(SignalKeys, Key) then
-		print(Key)
 		local newSignal = Signal.new()
 		self[Key] = newSignal
 		return newSignal
@@ -374,13 +373,17 @@ function Class.Subscribe(self: Class, Player: Player)
 		warn(`Cannot change replication properties of a child object`)
 		return
 	end
-	
 	if Player and not ReadyPlayers[Player] then
 		warn(`Player {Player} is not ready`)
 		return
 	end
+	if self.IncludeList[Player] then
+		return
+	end
 
-	self.IncludeList[Player] = true
+	if self.ReplicateMode ~= "All" then
+		self.IncludeList[Player] = true
+	end
 	self.ExcludeList[Player] = nil
 
 	IterateGroup(self, function(Object)
@@ -418,9 +421,11 @@ function Class.Unsubscribe(self: Class, Player: Player)
 		warn(`Cannot change replication properties of a child object`)
 		return
 	end
-	
 	if Player and not ReadyPlayers[Player] then
 		warn(`Player {Player} is not ready`)
+		return
+	end
+	if self.ExcludeList[Player] then
 		return
 	end
 

@@ -44,7 +44,7 @@ return function<T>(Id: string, Data: T, Player: Player?)
 
 		local Subscribe = Object.Subscribe
 		Object.Subscribe = function(self, Player)
-			if #Object.IncludeList > 1 then
+			if #Object.IncludeList >= 1 then
 				SingletonReplicationError()
 			end
 			return Subscribe(Object, Player)

@@ -6,10 +6,10 @@ export type ClientClass<T = {}> = Client.Class<T>
 export type ServerClass<T = {}, Children = {}> = Server.Class<T, Children>
 
 local Lib = {
-	ClientAPI = Client,
-	ServerAPI = Server,
+	Client = Client,
+	Server = Server,
 
-	SharedAPI = {
+	Shared = {
 		getClientSingleton = Singleton
 	},
 }
