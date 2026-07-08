@@ -15,7 +15,7 @@ local Ids = 0
 local IsInit = false
 
 const SignalKeys = {
-	"SignalMessage"
+	"SignalMessage",
 }
 const TableKeys = {
 	"Children",
@@ -29,7 +29,6 @@ Class.__index = function(self, Key)
 	if Existing then
 		return Existing
 	elseif table.find(TableKeys, Key) then
-		print(Key)
 		local newTable = {}
 		self[Key] = newTable
 		return newTable
@@ -48,15 +47,20 @@ export type Class<T = {}, Children = {}> = Shared.ServerClass<T, Children>
 const ReadyPlayers = {} :: { [Player]: boolean }
 const Objects = {} :: { [number]: Class }
 
+Module.SignalPlayerAdded = Signal.new() :: Signal.Signal<Player>
+Module.SignalPlayerRemoved = Signal.new() :: Signal.Signal<Player>
+
 --== Script ==--
 local function OnPlayerAdded(Player: Player)
 	ReadyPlayers[Player] = true
-	
+
 	for i,v in Objects do
 		if v.ReplicateMode == "All" then
 			Shared.Packets.ObjectCreated.sendTo({ Id = v.Id, Data = v.Data, Tags = v.Tags } , Player)
 		end
 	end
+
+	Module.SignalPlayerAdded:Fire(Player)
 end
 local function OnPlayerRemoving(Player: Player)
 	ReadyPlayers[Player] = nil
@@ -65,6 +69,8 @@ local function OnPlayerRemoving(Player: Player)
 		v.IncludeList[Player] = nil
 		v.ExcludeList[Player] = nil
 	end
+	
+	Module.SignalPlayerRemoved:Fire(Player)
 end
 
 local function IterateGroup(self: Class, Func: (self: Class) -> ())

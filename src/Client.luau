@@ -1,4 +1,5 @@
 --!optimize 2
+local RunService = game:GetService("RunService")
 
 const Module = {}
 
@@ -62,7 +63,9 @@ end
 local function Destroy(Object: Class)
 	Object.Active = nil
 	
-	Object.SignalDestroyed:Fire(Object)
+	if rawget(Object, "SignalDestroyed") then
+		Object.SignalDestroyed:Fire(Object)
+	end
 	ObjectRemoved:Fire(Object)
 
 	Objects[Object.Id] = nil
@@ -85,7 +88,7 @@ local function Destroy(Object: Class)
 	end
 end
 
-function Module.Init()
+local function Init()
 	if IsInit then return end
 	IsInit = true
 	
@@ -130,7 +133,9 @@ function Module.Init()
 			Pointer[Path[#Path]] = Value
 		end
 		
-		Object.SignalChanged:FireDeferred(Path, Value, "Set")
+		if rawget(Object, "SignalChanged") then
+			Object.SignalChanged:FireDeferred(Path, Value, "Set")
+		end
 	end)
 	Shared.Packets.SetValues.listen(function(Info)
 		local Id = Info[1]
@@ -152,7 +157,9 @@ function Module.Init()
 			SignalValues[Key] = Value
 		end
 		
-		Object.SignalChanged:FireDeferred(Path, SignalValues, "SetValues")
+		if rawget(Object, "SignalChanged") then
+			Object.SignalChanged:FireDeferred(Path, SignalValues, "SetValues")
+		end
 	end)
 	
 	
@@ -172,7 +179,9 @@ function Module.Init()
 		local Pointer = Object:Get(Path, 1)
 		table.insert(Pointer, Index, Value)
 		
-		Object.SignalChanged:FireDeferred(Path, Value, "Insert")
+		if rawget(Object, "SignalChanged") then
+			Object.SignalChanged:FireDeferred(Path, Value, "Insert")
+		end
 	end)
 	Shared.Packets.Remove.listen(function(Info)
 		local Id = Info[1]
@@ -190,7 +199,9 @@ function Module.Init()
 		local Pointer = Object:Get(Path, 1)
 		table.remove(Pointer, Index)
 		
-		Object.SignalChanged:FireDeferred(Path, nil, "Remove")
+		if rawget(Object, "SignalChanged") then
+			Object.SignalChanged:FireDeferred(Path, nil, "Remove")
+		end
 	end)
 	
 	Shared.Packets.Message.listen(function(Info)
@@ -218,6 +229,9 @@ function Module.Init()
 	
 	task.wait()
 	Shared.Packets.RequestData.send()
+end
+if RunService:IsClient() then
+	Init()
 end
 
 Module.GetTagged = function(Tag: string|{string}, Id: number?) : Class|{Class}?
