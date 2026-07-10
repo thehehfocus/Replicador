@@ -14,34 +14,27 @@ const SingletonReplicationError = function()
 	end
 end
 
-const SingletonIdentifier = "•S-ton•"
-const Singletons = {} :: {[Player]: {[string]: Shared.ServerClass<any>}}
-if IsServer then
-	Server.SignalPlayerRemoved:Connect(function(Player)
-		Singletons[Player] = nil
-	end)
-end
-
-return function<T>(Id: string, Data: T, Player: Player?)
-	Id ..= SingletonIdentifier
-
+return function<T>(Identifier: string, Data: T, Player: Player?)
 	if IsServer then
-		Id ..= Player.UserId
+		Identifier ..= Player.UserId
+
+		local Existing = Server.GetFromIdentifier(Identifier)
+		if Existing then
+			return Existing
+		end
 
 		local Success = Server.WaitForReadyPlayer(Player)
 		if not Success then
-			return 
+			warn(`Wait for player failed.`)
+			return
 		end
 
-		if Singletons[Player] and Singletons[Player][Id] then
-			return Singletons[Player][Id]
-		elseif not Singletons[Player] then
-			Singletons[Player] = {}
-		end
+		local Object = Server.Register({
+			Identifier = Identifier,
+			Data = Data,
+		})
 
-		local Object = Server.Register(Data, Id)
 		Object.Replicate = SingletonReplicationError
-
 		local Subscribe = Object.Subscribe
 		Object.Subscribe = function(self, Player)
 			if #Object.IncludeList >= 1 then
@@ -49,24 +42,15 @@ return function<T>(Id: string, Data: T, Player: Player?)
 			end
 			return Subscribe(Object, Player)
 		end
-		Singletons[Player][Id] = Object
-		
+
 		Object:Subscribe(Player)
 
 		return Object
 	else
-		Id ..= Players.LocalPlayer.UserId
-		local Existing = Client.GetTagged(Id)
-		if Existing and #Existing > 1 then
-			SingletonReplicationError()
-		end
-		
-		local Object = (Existing and Existing[1]) or Client.AwaitForTagged(Id)
+		Identifier ..= Players.LocalPlayer.UserId
+
+		local Object = Client.Get(Identifier) or Client.AwaitFor(Identifier)
 
 		return Object
 	end
-end :: (
-	<T>(Id: string, DataTemplate: T?) -> Shared.ClientClass<T>
-) & (
-	<T>(Id: string, Data: T, Player: Player) -> Shared.ServerClass<T>?
-)
+end :: (<T>(Id: string, DataTemplate: T) -> Shared.ClientClass<T>) & (<T>(Id: string, Data: T, Player: Player) -> Shared.ServerClass<T>?)

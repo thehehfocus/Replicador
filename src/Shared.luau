@@ -22,7 +22,8 @@ if BytenetMax then
 					value = BytenetMax.struct{
 						[1] = IdType,
 						[2] = BytenetMax.unknown,
-						[3] = BytenetMax.array(BytenetMax.string)
+						[3] = BytenetMax.array(BytenetMax.string),
+						[4] = BytenetMax.optional(BytenetMax.string),
 					}
 				}),
 				ObjectDestroyed = BytenetMax.definePacket({
@@ -138,10 +139,11 @@ end
 export type PathType = {string}|{number}|{string|number}
 
 export type Action = "Set"|"Insert"|"Remove"|"SetValues"
-export type ClientClass<T> = {
+export type ClientClass<T = any> = {
 	Id: number,
 	Data: T,
 	Tags: {string},
+	Identifier: string?,
 	
 	--[[
 		Whether the Object is being replicated.
@@ -184,10 +186,11 @@ type ProxyTypeAny = {
 	[any]: any,
 }
 
-export type ServerClass<T, Children = {}> = {
+export type ServerClass<T = any, Children = {}> = {
 	Id: number,
 	Data: T,
 	Tags: {string},
+	Identifier: string?,
 	
 	--[[
 		Whether the object is not destroyed.
@@ -257,6 +260,8 @@ export type ServerClass<T, Children = {}> = {
 		Clears the replica and removes replication.
 	]]
 	Destroy: (self: ServerClass<T, Children>) -> (),
+
+	_creation: {},
 }
 
 return Shared

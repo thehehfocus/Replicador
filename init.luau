@@ -9,9 +9,7 @@ local Lib = {
 	Client = Client,
 	Server = Server,
 
-	Shared = {
-		getClientSingleton = Singleton
-	},
+	Singleton = Singleton,
 }
 
 return Lib
