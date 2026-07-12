@@ -273,8 +273,12 @@ end :: ((Tag: string) -> { Class }) & ((Tags: { string }) -> { Class }) & ((Tag:
 local function IdentifierImpl(Identifier: string, Callback)
 	return function(Class: Class)
 		if Class.Identifier == Identifier then
-			Callback(Class)
+			if Callback then
+				Callback(Class)
+			end
+			return true
 		end
+		return false
 	end
 end
 Module.OnNew = function(Identifier: string, Callback: (New: Class) -> (), CallOnExisting: boolean?): Signal.Connection
@@ -292,9 +296,14 @@ end
 local function TaggedImpl(Tags: string | { string }, Callback)
 	if type(Tags) == "string" then
 		return function(Class)
-			if Module.GetTagged(Tags, Class.Id) then
+			if not Module.GetTagged(Tags, Class.Id) then
+				return false
+			end
+
+			if Callback then
 				Callback(Class)
 			end
+			return true
 		end
 	else
 		return function(Class)
@@ -302,11 +311,14 @@ local function TaggedImpl(Tags: string | { string }, Callback)
 			for i, v in Tags do
 				Has = Module.GetTagged(v, Class.Id)
 				if not Has then
-					return
+					return false
 				end
 			end
 
-			Callback(Class)
+			if Callback then
+				Callback(Class)
+			end
+			return true
 		end
 	end
 end
@@ -337,17 +349,7 @@ Module.AwaitFor = function(Identifier: string)
 		return Already
 	end
 
-	local Object
-	local Conn = Module.OnNew(Identifier, function(New)
-		Object = New
-	end)
-
-	while not Object do
-		task.wait()
-	end
-	Conn:Disconnect()
-
-	return Object
+	return ObjectAdded:FilteredWait(IdentifierImpl(Identifier))
 end
 Module.AwaitForTagged = function(Tags: string | { string }, Count: number?): Class | { Class }
 	local Already = Module.GetTagged(Tags)
@@ -378,17 +380,7 @@ Module.AwaitForTagged = function(Tags: string | { string }, Count: number?): Cla
 			return _nextAlready
 		end
 
-		local Object
-		local Conn = Module.OnNewTagged(Tags, function(New)
-			Object = New
-		end)
-
-		while not Object do
-			task.wait()
-		end
-		Conn:Disconnect()
-
-		return Object
+		return ObjectAdded:FilteredWait(Tags, TaggedImpl(Tags))
 	end
 end :: ((Tags: string | { string }) -> Class) & ((Tags: string | { string }, Count: number) -> { Class })
 

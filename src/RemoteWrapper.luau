@@ -16,10 +16,11 @@ export type CustomFunction<Send = any, Receive = any> = {
 	listen: (callback: (data: Receive, player: Player?) -> Receive) -> RBXScriptConnection,
 }
 
-function Module.RegisterEvent(Name: string) : CustomEvent
+function Module.RegisterEvent(Name: string, Unreliable: boolean?) : CustomEvent
 	if IsServer then
-		local Event = Instance.new("RemoteEvent", RemoteFolder)
+		local Event = if Unreliable then Instance.new("UnreliableRemoteEvent") else Instance.new("RemoteEvent")
 		Event.Name = Name
+		Event.Parent = RemoteFolder
 		return {
 			sendTo = function(data, player)
 				Event:FireClient(player, data)
@@ -45,8 +46,9 @@ end
 
 function Module.RegisterFunction(Name: string) : CustomFunction
 	if IsServer then
-		local Event = Instance.new("RemoteFunction", RemoteFolder)
+		local Event = Instance.new("RemoteFunction")
 		Event.Name = Name
+		Event.Parent = RemoteFolder
 		return {
 			send = function(data, player)
 				return Event:InvokeClient(player, data)

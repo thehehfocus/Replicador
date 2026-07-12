@@ -96,7 +96,7 @@ else
 			Remove = RemoteWrapper.RegisterEvent("Remove"),
 
 			Message = RemoteWrapper.RegisterEvent("Message"),
-			URMessage = RemoteWrapper.RegisterEvent("URMessage"),
+			URMessage = RemoteWrapper.RegisterEvent("URMessage", true),
 		}
 	}
 end
@@ -197,9 +197,6 @@ export type ServerClass<T = any, Children = {}> = {
 	]]
 	Active: boolean?,
 	
-	--[[
-		Replication settings.
-	]]
 	IncludeList: {[Player]: boolean},
 	ExcludeList: {[Player]: boolean},
 
@@ -211,6 +208,9 @@ export type ServerClass<T = any, Children = {}> = {
 	SignalMessage: Signal.Signal<any, boolean, Player>,
 	
 	Set: (self: ServerClass<T, Children>, Path: PathType, Value: any) -> (),
+	--[[
+		Sets the key-value 'Values' pairs at the provided path.
+	]]
 	SetValues: (self: ServerClass<T, Children>, Path: PathType, Values: {[PathType]: any}) -> (),
 	Get: (self: ServerClass<T, Children>, Path: PathType, IgnoreLast: number?) -> any,
 	
@@ -239,11 +239,18 @@ export type ServerClass<T = any, Children = {}> = {
 	]]
 	Replicate: (self: ServerClass<T, Children>) -> ServerClass<T, Children>,
 	--[[
-		Subscribes the specific player to the Object replication.
+		Adds the specified player to the replication.
 	]]
 	Subscribe: (self: ServerClass<T, Children>, Player: Player) -> ServerClass<T, Children>,
 	
+	--[[
+		Removes replication from all players.
+		Clears Include/Exclude lists.
+	]]
 	Unreplicate: (self: ServerClass<T, Children>) -> (),
+	--[[
+		Removes the specified player from the replication.
+	]]
 	Unsubscribe: (self: ServerClass<T, Children>, Player: Player) -> (),
 	
 	--[[
@@ -255,6 +262,9 @@ export type ServerClass<T = any, Children = {}> = {
 	]]
 	OnMessage: (self: ServerClass<T, Children>, Callback: (Player: Player, Message: any) -> (), Player: Player?, Unreliable: boolean?) -> Signal.Connection,
 	
+	--[[
+		Iterates through all replicated players.
+	]]
 	IterateTargets: (self: ServerClass<T, Children>, Callback: (Player: Player) -> ()) -> (),
 	--[[
 		Clears the replica and removes replication.
