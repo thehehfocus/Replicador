@@ -196,7 +196,7 @@ function Class.IterateTargets(self: Class, Callback: (Player: Player) -> ())
 
 			Callback(i)
 		end
-	elseif self.ReplicateMode ~= "None" then
+	else
 		for i, v in self.IncludeList do
 			Callback(i)
 		end

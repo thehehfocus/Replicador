@@ -9,8 +9,6 @@ const Shared = require("./Shared")
 const SingletonReplicationError = function()
 	if IsServer then
 		error(`Cannot replicate a singleton to more than one player.`)
-	else
-		error(`Got multiple instances of a singleton on client.`)
 	end
 end
 

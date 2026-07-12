@@ -349,7 +349,7 @@ Module.AwaitFor = function(Identifier: string)
 		return Already
 	end
 
-	return ObjectAdded:FilteredWait(IdentifierImpl(Identifier))
+	return ObjectAdded:Wait(IdentifierImpl(Identifier))
 end
 Module.AwaitForTagged = function(Tags: string | { string }, Count: number?): Class | { Class }
 	local Already = Module.GetTagged(Tags)
@@ -380,7 +380,7 @@ Module.AwaitForTagged = function(Tags: string | { string }, Count: number?): Cla
 			return _nextAlready
 		end
 
-		return ObjectAdded:FilteredWait(Tags, TaggedImpl(Tags))
+		return ObjectAdded:Wait(Tags, TaggedImpl(Tags))
 	end
 end :: ((Tags: string | { string }) -> Class) & ((Tags: string | { string }, Count: number) -> { Class })
 
