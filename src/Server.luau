@@ -51,18 +51,26 @@ Module.SignalPlayerAdded = Signal.new() :: Signal.Signal<Player>
 Module.SignalPlayerRemoved = Signal.new() :: Signal.Signal<Player>
 
 --== Script ==--
-local function OnPlayerAdded(Player: Player)
+const function CreateForPlayer(Creation, Player: Player)
+	Shared.Packets.ObjectCreated.sendTo(Creation, Player)
+end
+const function DestroyForPlayer(Id: number, Player: Player)
+	Shared.Packets.ObjectDestroyed.sendTo(Id, Player)
+end
+
+const function OnPlayerAdded(Player: Player)
 	ReadyPlayers[Player] = true
 
 	for i, v in Objects do
 		if v.ReplicateMode == "All" then
-			Shared.Packets.ObjectCreated.sendTo({ Id = v.Id, Data = v.Data, Tags = v.Tags }, Player)
+			local Info = v._creation
+			CreateForPlayer(Info, Player)
 		end
 	end
 
 	Module.SignalPlayerAdded:Fire(Player)
 end
-local function OnPlayerRemoving(Player: Player)
+const function OnPlayerRemoving(Player: Player)
 	ReadyPlayers[Player] = nil
 
 	for i, v in Objects do
@@ -73,7 +81,7 @@ local function OnPlayerRemoving(Player: Player)
 	Module.SignalPlayerRemoved:Fire(Player)
 end
 
-local function IterateGroup(self: Class, Func: (self: Class) -> ())
+const function IterateGroup(self: Class, Func: (self: Class) -> ())
 	Func(self)
 
 	local Children = rawget(self, "Children")
@@ -84,7 +92,7 @@ local function IterateGroup(self: Class, Func: (self: Class) -> ())
 	end
 end
 
-local function Init()
+const function Init()
 	if IsInit then
 		return
 	end
@@ -262,6 +270,13 @@ function Class.GetShallowProxy(self: Class, Path: PathType?)
 	return Proxy
 end
 
+function Class.IsTarget(self: Class, Player: Player): boolean?
+	return ReadyPlayers[Player] and 
+		if self.ReplicateMode == "All" then
+			not self.ExcludeList[Player] else
+				self.IncludeList[Player]
+end
+
 --== Set & Get ==--
 function Class.Set(self: Class, Path: PathType, Value: any, DontReplicate: boolean?)
 	Path = table.clone(Path)
@@ -306,34 +321,54 @@ function Class.Get(self: Class, Path: PathType, IgnoreLast: number?): any
 end
 
 --== Hierarchy ==--
-function Class.AssignChildren(self: Class, ChildMap: { [string]: Class }, ChildName: string?, Child: Class?)
-	if Module.Is(ChildMap) then
-		error(`Expected string-class map, got a class.`)
-	end
-	if type(ChildMap) == "table" then
-		for i, v in ChildMap do
-			self:AssignChildren(nil, i, v)
+function Class.SetParent(self: Class, Parent: Class?, ChildIndex: any?)
+	if not Parent and not ChildIndex then
+		for i,v in self.Parent.Children do
+			if v == self then
+				self.Parent.Children[i] = nil
+			end
 		end
+
+		self.Parent = nil
+		self.IncludeList = {}
+		self.ExcludeList = {}
+		self.ReplicateMode = "None"
+		
 		return
+	elseif not Parent and ChildIndex then
+		error(`Parent is nil.`)
 	end
 
-	assert(Child.Parent == nil, `Child is already parented`)
-	assert(self.Children[ChildName] == nil, `Child with name '{ChildName}' already exists`)
+	assert(self.Parent == nil, `Child is already parented`)
+	assert(Parent.Children[ChildIndex] == nil, `Child with name '{ChildIndex}' already exists`)
 
-	local RecursiveCheck = self
+	local RecursiveCheck = Parent
 	while RecursiveCheck do
 		RecursiveCheck = RecursiveCheck.Parent
-		assert(RecursiveCheck ~= Child, `Child is parented to a descendant`)
+		assert(RecursiveCheck ~= self, `Child is parented to a descendant`)
 	end
 
-	self.Children[ChildName] = Child
-	Child.Parent = self
+	Parent.Children[ChildIndex] = self
+	self.Parent = Parent
 
-	IterateGroup(Child, function(Object)
-		Object.IncludeList = self.IncludeList
-		Object.ExcludeList = self.ExcludeList
-		Object.ReplicateMode = self.ReplicateMode
+	self:IterateTargets(function(Player)
+		if not Parent:IsTarget(Player) then
+			DestroyForPlayer(self.Id, Player)
+		end
 	end)
+
+	IterateGroup(self, function(Object)
+		Object.IncludeList = Parent.IncludeList
+		Object.ExcludeList = Parent.ExcludeList
+		Object.ReplicateMode = Parent.ReplicateMode
+	end)
+
+	local Info = self._creation
+	self:IterateTargets(function(Player)
+		CreateForPlayer(Info, Player)
+	end)
+
+	return self
 end
 
 --== Table Operations ==--
@@ -387,7 +422,7 @@ function Class.Replicate(self: Class)
 
 		local Info = self._creation
 		Object:IterateTargets(function(Player)
-			Shared.Packets.ObjectCreated.sendTo(Info, Player)
+			CreateForPlayer(Info, Player)
 		end)
 	end)
 
@@ -413,7 +448,7 @@ function Class.Subscribe(self: Class, Player: Player)
 
 	IterateGroup(self, function(Object)
 		local Info = self._creation
-		Shared.Packets.ObjectCreated.sendTo(Info, Player)
+		CreateForPlayer(Info, Player)
 	end)
 
 	return self
@@ -425,9 +460,9 @@ function Class.Unreplicate(self: Class)
 	end
 
 	IterateGroup(self, function(Object)
-		local Info = { Object.Id }
+		local Info = Object.Id
 		Object:IterateTargets(function(Player)
-			Shared.Packets.ObjectDestroyed.sendTo(Info, Player)
+			DestroyForPlayer(Info, Player)
 		end)
 
 		if Object == self then
@@ -460,8 +495,8 @@ function Class.Unsubscribe(self: Class, Player: Player)
 	end
 
 	IterateGroup(self, function(Object)
-		local Info = { Object.Id }
-		Shared.Packets.ObjectDestroyed.sendTo(Info, Player)
+		local Info = Object.Id
+		DestroyForPlayer(Info, Player)
 	end)
 end
 
@@ -506,14 +541,7 @@ function Class.Destroy(self: Class)
 	IterateGroup(self, function(self)
 		self.Active = nil
 
-		local Info = { self.Id }
-		self:IterateTargets(function(Player)
-			Shared.Packets.ObjectDestroyed.sendTo(Info, Player)
-		end)
-
-		self.ReplicateMode = "None"
-		self.IncludeList = nil
-		self.ExcludeList = nil
+		self:Unreplicate()
 
 		for i, v in SignalKeys do
 			local destroySignal = rawget(self, v)

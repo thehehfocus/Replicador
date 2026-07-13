@@ -27,9 +27,7 @@ if BytenetMax then
 					}
 				}),
 				ObjectDestroyed = BytenetMax.definePacket({
-					value = BytenetMax.struct{
-						[1] = IdType
-					}
+					value = IdType
 				}),
 				
 				Set = BytenetMax.definePacket({
@@ -224,11 +222,17 @@ export type ServerClass<T = any, Children = {}> = {
 	) & (
 		(self: ServerClass<T, Children>) -> ProxyType & T
 	),
+
+	IsTarget: (self: ServerClass<T, Children>, Player: Player) -> boolean?,
 	
 	--[[
-		Assigns child Objects, which copy replication properties of the parent.
+		Assigns a parent object, the child will copy parent's replication parameters.
 	]]
-	AssignChildren: (self: ServerClass<T, Children>, ChildMap: {[string]: any}) -> (),
+	SetParent: (
+		(self: ServerClass<T, Children>, Parent: any, ChildIndex: any) -> ServerClass<T, Children>
+	) & (
+		(self: ServerClass<T, Children>) -> () -- Removes the parent.
+	),
 	
 	Insert: (self: ServerClass<T, Children>, Path: PathType, Value: any, Index: number?) -> (),
 	Remove: (self: ServerClass<T, Children>, Path: PathType, Index: number?) -> (),

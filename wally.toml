@@ -5,7 +5,7 @@ description = "Simple library for replication structure."
 authors = ["thehehfocus"]
 
 license = "MIT"
-version = "0.1.11"
+version = "0.1.12"
 registry = "https://github.com/UpliftGames/wally-index"
 
 realm = "shared"

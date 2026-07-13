@@ -7,9 +7,7 @@ const Server = require("./Server")
 const Shared = require("./Shared")
 
 const SingletonReplicationError = function()
-	if IsServer then
-		error(`Cannot replicate a singleton to more than one player.`)
-	end
+	error(`Cannot add targets to a singleton.`)
 end
 
 return function<T>(Identifier: string, Data: T, Player: Player?)
@@ -32,16 +30,10 @@ return function<T>(Identifier: string, Data: T, Player: Player?)
 			Data = Data,
 		})
 
-		Object.Replicate = SingletonReplicationError
-		local Subscribe = Object.Subscribe
-		Object.Subscribe = function(self, Player)
-			if #Object.IncludeList >= 1 then
-				SingletonReplicationError()
-			end
-			return Subscribe(Object, Player)
-		end
-
 		Object:Subscribe(Player)
+
+		Object.Replicate = SingletonReplicationError
+		Object.Subscribe = SingletonReplicationError
 
 		return Object
 	else

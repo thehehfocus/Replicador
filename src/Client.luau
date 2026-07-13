@@ -66,10 +66,11 @@ local function Register(Id: number, Data: any, Tags: { string }, Identifier: str
 end
 
 local function Destroy(Object: Class)
-	Object.Active = nil
+	Object.Active = false
 
-	if rawget(Object, "SignalDestroyed") then
-		Object.SignalDestroyed:Fire(Object)
+	local SignalDestroyed = rawget(Object, "SignalDestroyed")
+	if SignalDestroyed then
+		SignalDestroyed:Fire(Object)
 	end
 	ObjectRemoved:Fire(Object)
 
@@ -115,7 +116,7 @@ local function Init()
 		Register(Id, Data, Tags, Identifier)
 	end)
 	Shared.Packets.ObjectDestroyed.listen(function(Info)
-		local Id = Info[1]
+		local Id = Info
 
 		local Object = Objects[Id]
 		if not Object then
@@ -144,8 +145,9 @@ local function Init()
 			Pointer[Path[#Path]] = Value
 		end
 
-		if rawget(Object, "SignalChanged") then
-			Object.SignalChanged:FireDeferred(Path, Value, "Set")
+		local SignalChanged = rawget(Object, "SignalChanged")
+		if SignalChanged then
+			SignalChanged:FireDeferred(Path, Value, "Set")
 		end
 	end)
 	Shared.Packets.SetValues.listen(function(Info)
@@ -168,8 +170,9 @@ local function Init()
 			SignalValues[Key] = Value
 		end
 
-		if rawget(Object, "SignalChanged") then
-			Object.SignalChanged:FireDeferred(Path, SignalValues, "SetValues")
+		local SignalChanged = rawget(Object, "SignalChanged")
+		if SignalChanged then
+			SignalChanged:FireDeferred(Path, SignalValues, "SetValues")
 		end
 	end)
 
@@ -189,8 +192,9 @@ local function Init()
 		local Pointer = Object:Get(Path, 1)
 		table.insert(Pointer, Index, Value)
 
-		if rawget(Object, "SignalChanged") then
-			Object.SignalChanged:FireDeferred(Path, Value, "Insert")
+		local SignalChanged = rawget(Object, "SignalChanged")
+		if SignalChanged then
+			SignalChanged:FireDeferred(Path, Value, "Insert")
 		end
 	end)
 	Shared.Packets.Remove.listen(function(Info)
@@ -209,8 +213,9 @@ local function Init()
 		local Pointer = Object:Get(Path, 1)
 		table.remove(Pointer, Index)
 
-		if rawget(Object, "SignalChanged") then
-			Object.SignalChanged:FireDeferred(Path, nil, "Remove")
+		local SignalChanged = rawget(Object, "SignalChanged")
+		if SignalChanged then
+			SignalChanged:FireDeferred(Path, nil, "Remove")
 		end
 	end)
 
@@ -223,7 +228,10 @@ local function Init()
 			return
 		end
 
-		Object.SignalMessage:Fire(Message, false)
+		local SignalMessage = rawget(Object, "SignalMessage")
+		if SignalMessage then
+			Object.SignalMessage:Fire(Message, false)
+		end
 	end)
 	Shared.Packets.URMessage.listen(function(Info)
 		local Id = Info[1]
@@ -234,7 +242,10 @@ local function Init()
 			return
 		end
 
-		Object.SignalMessage:Fire(Message, true)
+		local SignalMessage = rawget(Object, "SignalMessage")
+		if SignalMessage then
+			Object.SignalMessage:Fire(Message, true)
+		end
 	end)
 
 	task.wait()
@@ -351,38 +362,16 @@ Module.AwaitFor = function(Identifier: string)
 
 	return ObjectAdded:Wait(IdentifierImpl(Identifier))
 end
-Module.AwaitForTagged = function(Tags: string | { string }, Count: number?): Class | { Class }
+Module.AwaitForTagged = function(Tags: string | { string }): Class
 	local Already = Module.GetTagged(Tags)
 
-	if Count then
-		local Objects = {}
-
-		for i, v in Already do
-			table.insert(Objects, v)
-			if #Objects >= Count then
-				return Objects
-			end
-		end
-
-		local Conn = Module.OnNewTagged(Tags, function(New)
-			table.insert(Objects, New)
-		end)
-
-		while #Objects < Count do
-			task.wait()
-		end
-		Conn:Disconnect()
-
-		return Objects
-	else
-		local _, _nextAlready = next(Already)
-		if _nextAlready then
-			return _nextAlready
-		end
-
-		return ObjectAdded:Wait(Tags, TaggedImpl(Tags))
+	local _, _nextAlready = next(Already)
+	if _nextAlready then
+		return _nextAlready
 	end
-end :: ((Tags: string | { string }) -> Class) & ((Tags: string | { string }, Count: number) -> { Class })
+
+	return ObjectAdded:Wait(Tags, TaggedImpl(Tags))
+end :: (Tags: string | { string }) -> Class
 
 function Class.Get(self: Class, Path: PathType, IgnoreLast: number?): any
 	local Data = self.Data
