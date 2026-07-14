@@ -17,7 +17,7 @@ const SignalKeys = {
 
 const Class = {}
 Class.__index = function(self, Key)
-	local Existing = rawget(self, Key) or Class[Key]
+	local Existing = Class[Key]
 	if Existing then
 		return Existing
 	elseif table.find(SignalKeys, Key) then
@@ -432,6 +432,31 @@ function Class.OnSet(self: Class, Path: PathType, Callback: (Value: any) -> ()):
 
 		Callback(Value)
 	end)
+end
+
+local proxyMT = {
+	OnChange = function(proxy, Callback)
+		local Object = proxy[1] :: Class
+		local Path = proxy[2] :: PathType
+
+		return Object:OnChange(Path, Callback)
+	end,
+	OnSet = function(proxy, Callback)
+		local Object = proxy[1] :: Class
+		local Path = proxy[2] :: PathType
+
+		return Object:OnSet(Path, Callback)
+	end,
+}
+proxyMT.__index = proxyMT
+function Class.GetPathProxy(self: Class, Path: PathType?)
+	if not Path then
+		Path = {}
+	end
+	return setmetatable({
+		self,
+		Path,
+	}, proxyMT)
 end
 
 return Module

@@ -25,7 +25,7 @@ const TableKeys = {
 
 const Class = {}
 Class.__index = function(self, Key)
-	local Existing = rawget(self, Key) or Class[Key]
+	local Existing = Class[Key]
 	if Existing then
 		return Existing
 	elseif table.find(TableKeys, Key) then
@@ -211,6 +211,11 @@ function Class.IterateTargets(self: Class, Callback: (Player: Player) -> ())
 	end
 end
 
+--[[
+	[1]: Path,
+	[2]: Object,
+	[3]: UsePath,
+--]]
 local proxyMT = {
 	Insert = function(proxy, Value, Index)
 		local Path = rawget(proxy, 1) or {} :: PathType
@@ -224,12 +229,26 @@ local proxyMT = {
 
 		Object:Remove(Path, Index)
 	end,
+	SetValues = function(proxy, Values)
+		local Path = rawget(proxy, 1) or {} :: PathType
+		local Object = rawget(proxy, 2) :: Class
+
+		Object:SetValues(Path, Values)
+	end,
 }
 proxyMT.__index = function(proxy, Key)
-	return proxyMT[Key] or rawget(proxy, 4)[Key]
+	local Existing = proxyMT[Key]
+	if Existing then
+		return Existing
+	end
+
+	local Path = rawget(proxy, 1) :: PathType
+	local Object = rawget(proxy, 2) :: Class
+
+	return Object:Get(Path)[Key]
 end
 proxyMT.__newindex = function(proxy, Key, Value)
-	local UsePath = rawget(proxy, 3) :: boolean?
+	local UsePath = rawget(proxy, 3) :: number?
 	local Object = rawget(proxy, 2) :: Class
 	local Path = rawget(proxy, 1) :: PathType
 
@@ -241,22 +260,12 @@ proxyMT.__newindex = function(proxy, Key, Value)
 		Object:Set({ Key }, Value)
 	end
 end
-
---[[
-	[1]: Path,
-	[2]: Object,
-	[3]: UsePath,
-	[4]: Data,
---]]
-
 function Class.GetShallowProxy(self: Class, Path: PathType?)
 	Path = Path and table.clone(Path)
 
-	local Data = self.Data
 	local Len = Path and #Path
 	local UsePath
 	if Len and Len > 0 then
-		Data = self:Get(Path)
 		UsePath = Len + 1
 	end
 
@@ -264,17 +273,14 @@ function Class.GetShallowProxy(self: Class, Path: PathType?)
 		Path,
 		self,
 		UsePath,
-		Data,
 	}, proxyMT)
 
 	return Proxy
 end
 
 function Class.IsTarget(self: Class, Player: Player): boolean?
-	return ReadyPlayers[Player] and 
-		if self.ReplicateMode == "All" then
-			not self.ExcludeList[Player] else
-				self.IncludeList[Player]
+	return ReadyPlayers[Player]
+		and if self.ReplicateMode == "All" then not self.ExcludeList[Player] else self.IncludeList[Player]
 end
 
 --== Set & Get ==--
@@ -323,7 +329,7 @@ end
 --== Hierarchy ==--
 function Class.SetParent(self: Class, Parent: Class?, ChildIndex: any?)
 	if not Parent and not ChildIndex then
-		for i,v in self.Parent.Children do
+		for i, v in self.Parent.Children do
 			if v == self then
 				self.Parent.Children[i] = nil
 			end
@@ -333,7 +339,7 @@ function Class.SetParent(self: Class, Parent: Class?, ChildIndex: any?)
 		self.IncludeList = {}
 		self.ExcludeList = {}
 		self.ReplicateMode = "None"
-		
+
 		return
 	elseif not Parent and ChildIndex then
 		error(`Parent is nil.`)

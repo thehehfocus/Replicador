@@ -137,6 +137,12 @@ end
 export type PathType = {string}|{number}|{string|number}
 
 export type Action = "Set"|"Insert"|"Remove"|"SetValues"
+
+type ClientProxyType = {
+	OnChange: (self: ClientProxyType, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
+	OnSet: (self: ClientProxyType, Callback: (Value: any) -> ()) -> Signal.Connection,
+}
+
 export type ClientClass<T = any> = {
 	Id: number,
 	Data: T,
@@ -172,15 +178,19 @@ export type ClientClass<T = any> = {
 		Listen to only changes on this path.	
 	]]
 	OnSet: (self: ClientClass<T>, Path: PathType, Callback: (Value: any) -> ()) -> Signal.Connection,
+
+	GetPathProxy: (self: ClientClass<T>, Path: PathType?) -> ClientProxyType,
 }
 
 type ProxyType = {
 	Insert: (self: ProxyType, Value: any, Index: number?) -> (),
 	Remove: (self: ProxyType, Index: number?) -> (),
+	SetValues: (self: ProxyType, Values: {[PathType]: any}) -> ()
 }
 type ProxyTypeAny = {
 	Insert: (self: ProxyTypeAny, Value: any, Index: number?) -> (),
 	Remove: (self: ProxyTypeAny, Index: number?) -> (),
+	SetValues: (self: ProxyTypeAny, Values: {[PathType]: any}) -> (),
 	[any]: any,
 }
 
