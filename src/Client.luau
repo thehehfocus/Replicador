@@ -1,21 +1,22 @@
 --!optimize 2
 local RunService = game:GetService("RunService")
 
-const Module = {}
+local Module = {}
 
 --== Dependencies ==--
-const Shared = require("./Shared")
-const Signal = require("./Signal")
+local Shared = require("./Shared")
+local Signal = require("./Signal")
+local MakeProxy = require("./MakeProxy")
 
 --== Variables ==--
 local IsInit = false
-const SignalKeys = {
+local SignalKeys = {
 	"SignalChanged",
 	"SignalDestroyed",
 	"SignalMessage",
 }
 
-const Class = {}
+local Class = {}
 Class.__index = function(self, Key)
 	local Existing = Class[Key]
 	if Existing then
@@ -28,25 +29,121 @@ Class.__index = function(self, Key)
 	return nil
 end
 
-const Objects = {} :: { [number]: Class }
-const Tagged = {} :: { [string]: { Class } }
-const Identifiers = {} :: { [string]: Object }
+local Objects = {} :: { [number]: Class }
+local Tagged = {} :: { [string]: { Class } }
+local Identifiers = {} :: { [string]: Object }
 
-const ObjectAdded = Signal.new() :: Signal.Signal<Class>
-const ObjectRemoved = Signal.new() :: Signal.Signal<Class>
+local ObjectAdded = Signal.new() :: Signal.Signal<Class>
+local ObjectRemoved = Signal.new() :: Signal.Signal<Class>
 
 type PathType = Shared.PathType
 export type Class<T = {}> = Shared.ClientClass<T>
+
+local function OnChange(
+	self: Class,
+	Path: PathType,
+	Callback: (Value: any, Action: Shared.Action, Path: PathType) -> ()
+): Signal.Connection
+	return self.SignalChanged:Connect(function(SetPath, Value, Action)
+		for i, v in Path do
+			if v ~= SetPath[i] then
+				return
+			end
+		end
+
+		Callback(Value, Action, SetPath)
+	end)
+end
+
+local function CheckImpl(SetPath, Action, TargetPath, TargetAction)
+	if Action ~= TargetAction then
+		return
+	end
+
+	local Len = #SetPath
+	if Action == "Insert" or Action == "Remove" then
+		Len -= 1 -- removing one, since its the index.
+	end
+	if Len ~= #TargetPath then
+		return
+	end
+	for i, v in TargetPath do
+		if v ~= SetPath[i] then
+			return
+		end
+	end
+
+	return true
+end
+local function OnSet(self: Class, Path: PathType, Callback: (Value: any) -> ()): Signal.Connection
+	return self.SignalChanged:Connect(function(SetPath, Value, Action)
+		if not CheckImpl(SetPath, Action, Path, "Set") then
+			return
+		end
+		Callback(Value)
+	end)
+end
+local function OnInsert(self: Class, Path: PathType, Callback: (Value: any, Index: any) -> ()): Signal.Connection
+	return self.SignalChanged:Connect(function(SetPath, Value, Action)
+		if not CheckImpl(SetPath, Action, Path, "Insert") then
+			return
+		end
+		Callback(Value, SetPath[#SetPath])
+	end)
+end
+local function OnRemove(self: Class, Path: PathType, Callback: (Index: any) -> ()): Signal.Connection
+	return self.SignalChanged:Connect(function(SetPath, Value, Action)
+		if not CheckImpl(SetPath, Action, Path, "Remove") then
+			return
+		end
+		Callback(SetPath[#SetPath])
+	end)
+end
+
+local ProxyMethods = {
+	OnChange = function(Proxy, Callback)
+		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
+		local Path = MakeProxy.TracePath(Proxy)
+		return OnChange(Object, Path, Callback)
+	end,
+	OnSet = function(Proxy, Callback, Key)
+		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
+		local Path = MakeProxy.TracePath(Proxy)
+		if Key then
+			table.insert(Path, Key)
+		end
+		return OnSet(Object, Path, Callback)
+	end,
+	OnInsert = function(Proxy, Callback)
+		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
+		local Path = MakeProxy.TracePath(Proxy)
+		return OnInsert(Object, Path, Callback)
+	end,
+	OnRemove = function(Proxy, Callback)
+		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
+		local Path = MakeProxy.TracePath(Proxy)
+		return OnRemove(Object, Path, Callback)
+	end,
+	GetRaw = MakeProxy.GetData,
+}
 
 --== Script ==--
 local function Register(Id: number, Data: any, Tags: { string }, Identifier: string?)
 	local Object = setmetatable({}, Class)
 	Object.Id = Id
-	Object.Data = Data
+	Object.Data = MakeProxy.new(Data, {
+		SetCallback = nil,
+		IndexMethods = ProxyMethods,
+		Identifier = Id,
+		CallFunction = function(Proxy)
+			return MakeProxy.GetValue(Proxy)
+		end,
+	})
 	Object.Tags = Tags
 	Object.Identifier = Identifier
 
 	Object.Active = true
+	Object._raw = Data
 
 	Objects[Id] = Object
 	if Identifier then
@@ -137,42 +234,13 @@ local function Init()
 		end
 
 		Path = Shared.PathToNormal(Path)
-		local Pointer = Object:Get(Path, 1)
+		local Pointer = Object:Get(Path, 1, true)
 
-		if #Path == 0 then
-			Object.Data = Value
-		else
-			Pointer[Path[#Path]] = Value
-		end
+		Pointer[Path[#Path]] = Value
 
 		local SignalChanged = rawget(Object, "SignalChanged")
 		if SignalChanged then
 			SignalChanged:FireDeferred(Path, Value, "Set")
-		end
-	end)
-	Shared.Packets.SetValues.listen(function(Info)
-		local Id = Info[1]
-		local Path = Info[2]
-		local Values = Info[3]
-
-		local Object = Objects[Id]
-		if not Object then
-			return
-		end
-
-		Path = Shared.PathToNormal(Path)
-		local Pointer = Object:Get(Path)
-
-		local SignalValues = {}
-		for Key, Value in Values do
-			Key = Shared.StringToType(Key)
-			Pointer[Key] = Value
-			SignalValues[Key] = Value
-		end
-
-		local SignalChanged = rawget(Object, "SignalChanged")
-		if SignalChanged then
-			SignalChanged:FireDeferred(Path, SignalValues, "SetValues")
 		end
 	end)
 
@@ -189,8 +257,8 @@ local function Init()
 		Path = Shared.PathToNormal(Path)
 
 		local Index = Path[#Path]
-		local Pointer = Object:Get(Path, 1)
-		table.insert(Pointer, Index, Value)
+		local Pointer = Object:Get(Path, 1, true)
+		MakeProxy.Insert(Pointer, Value, Index)
 
 		local SignalChanged = rawget(Object, "SignalChanged")
 		if SignalChanged then
@@ -209,9 +277,8 @@ local function Init()
 		Path = Shared.PathToNormal(Path)
 
 		local Index = Path[#Path]
-
-		local Pointer = Object:Get(Path, 1)
-		table.remove(Pointer, Index)
+		local Pointer = Object:Get(Path, 1, true)
+		MakeProxy.Remove(Pointer, Index)
 
 		local SignalChanged = rawget(Object, "SignalChanged")
 		if SignalChanged then
@@ -373,8 +440,8 @@ Module.AwaitForTagged = function(Tags: string | { string }): Class
 	return ObjectAdded:Wait(Tags, TaggedImpl(Tags))
 end :: (Tags: string | { string }) -> Class
 
-function Class.Get(self: Class, Path: PathType, IgnoreLast: number?): any
-	local Data = self.Data
+function Class.Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
+	local Data = if notraw then self.Data else self._raw
 	for i = 1, #Path - (IgnoreLast or 0) do
 		Data = Data[Path[i]]
 	end
@@ -399,64 +466,6 @@ function Class.OnMessage(self: Class, Callback: (Message: any) -> (), Unreliable
 
 		Callback(Message)
 	end)
-end
-
-function Class.OnChange(
-	self: Class,
-	Path: PathType,
-	Callback: (Value: any, Action: Shared.Action, Path: PathType) -> ()
-): Signal.Connection
-	return self.SignalChanged:Connect(function(SetPath, Value, Action)
-		for i, v in Path do
-			if v ~= SetPath[i] then
-				return
-			end
-		end
-
-		Callback(Value, Action, SetPath)
-	end)
-end
-function Class.OnSet(self: Class, Path: PathType, Callback: (Value: any) -> ()): Signal.Connection
-	return self.SignalChanged:Connect(function(SetPath, Value, Action)
-		if Action ~= "Set" then
-			return
-		end
-		if #SetPath ~= #Path then
-			return
-		end
-		for i, v in Path do
-			if v ~= SetPath[i] then
-				return
-			end
-		end
-
-		Callback(Value)
-	end)
-end
-
-local proxyMT = {
-	OnChange = function(proxy, Callback)
-		local Object = proxy[1] :: Class
-		local Path = proxy[2] :: PathType
-
-		return Object:OnChange(Path, Callback)
-	end,
-	OnSet = function(proxy, Callback)
-		local Object = proxy[1] :: Class
-		local Path = proxy[2] :: PathType
-
-		return Object:OnSet(Path, Callback)
-	end,
-}
-proxyMT.__index = proxyMT
-function Class.GetPathProxy(self: Class, Path: PathType?)
-	if not Path then
-		Path = {}
-	end
-	return setmetatable({
-		self,
-		Path,
-	}, proxyMT)
 end
 
 return Module

@@ -1,16 +1,16 @@
 --!strict
-const Shared = {}
+local Shared = {}
 
 -- Config
 
 -- Change these if you have ByteNetMax.
---const Packages = game:GetService("ReplicatedStorage"):WaitForChild("Packages")
-const BytenetMax = nil::any --require(Packages.ByteNetMax)
-const IdType = BytenetMax and BytenetMax.uint16
+--local Packages = game:GetService("ReplicatedStorage"):WaitForChild("Packages")
+local BytenetMax = nil::any --require(Packages.ByteNetMax)
+local IdType = BytenetMax and BytenetMax.uint16
 
 -- Wrapper for remotes.
-const RemoteWrapper = require("./RemoteWrapper")
-const Signal = require("./Signal")
+local RemoteWrapper = require("./RemoteWrapper")
+local Signal = require("./Signal")
 
 local Namespace
 
@@ -29,7 +29,7 @@ if BytenetMax then
 				ObjectDestroyed = BytenetMax.definePacket({
 					value = IdType
 				}),
-				
+
 				Set = BytenetMax.definePacket({
 					value = BytenetMax.struct{
 						[1] = IdType, 
@@ -44,11 +44,11 @@ if BytenetMax then
 						[3] = BytenetMax.map(BytenetMax.string, BytenetMax.unknown)
 					},
 				}),
-				
+
 				RequestData = BytenetMax.definePacket({
 					value = BytenetMax.nothing,
 				}),
-				
+
 				Insert = BytenetMax.definePacket({
 					value = BytenetMax.struct{
 						[1] = IdType,
@@ -62,7 +62,7 @@ if BytenetMax then
 						[2] = BytenetMax.array(BytenetMax.string),
 					}
 				}),
-				
+
 				Message = BytenetMax.definePacket({
 					value = BytenetMax.struct{
 						[1] = IdType,
@@ -136,30 +136,86 @@ end
 
 export type PathType = {string}|{number}|{string|number}
 
-export type Action = "Set"|"Insert"|"Remove"|"SetValues"
+export type Action = "Set"|"Insert"|"Remove"
 
-type ClientProxyType = {
-	OnChange: (self: ClientProxyType, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
-	OnSet: (self: ClientProxyType, Callback: (Value: any) -> ()) -> Signal.Connection,
+type ProxyMethodsClient<Data = any> = {
+	__index: {
+		OnSet: (self: any, Callback: (Value: Data) -> ()) -> Signal.Connection,
+		OnChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
+	},
+	__call: (
+		(any) -> Data
+	)
 }
+type ArrayProxyMethodsClient<T = any, Data = any> = {
+	__index: {
+		OnSet: (self: any, Callback: (Value: Data) -> ()) -> Signal.Connection,
+		OnChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
+		OnInsert: (self: any, Callback: (Value: T, Index: number) -> ()) -> Signal.Connection,
+		OnRemove: (self: any, Callback: (Index: number) -> ()) -> Signal.Connection,
+	},
+	__call: (
+		(any) -> Data
+	)
+}
+type ProxyValueMethodsClient<T> = {
+	__index: {
+		OnSet: (self: any, Callback: (Value: T) -> ()) -> Signal.Connection,
+	},
+	__call: (
+		(any) -> T
+	),
+}
+type function ComputeTypeClient(Origin: type)
+	local function Do(Type: type)
+		local Indexer = Type:is("table") and Type:readindexer()
+		local New = types.newtable()
+
+		if Indexer then
+			New:setindexer(Indexer.index, Do(Indexer.result))
+			New:setmetatable(ArrayProxyMethodsClient(Indexer.result, Type))
+		elseif not Type:is("table") then
+			New:setmetatable(ProxyValueMethodsClient(Type))
+		else
+			New:setmetatable(ProxyMethodsClient(Type))
+		end
+
+		if not Type:is("table") then
+			return New
+		end
+
+		for i,v in Type:properties() do
+			if v.read then
+				New:setreadproperty(i, Do(v.read))
+			end
+			--if v.write then
+			--	New:setwriteproperty(i, v.write)
+			--end
+		end
+
+		return New
+	end
+
+	return Do(Origin)
+end
 
 export type ClientClass<T = any> = {
 	Id: number,
-	Data: T,
+	Data: ComputeTypeClient<T>,
 	Tags: {string},
 	Identifier: string?,
-	
+
 	--[[
 		Whether the Object is being replicated.
 	]]
 	Active: boolean?,
-	
+
 	Get: (self: ClientClass<T>, Path: PathType, IgnoreLast: number?) -> any,
-	
+
 	SignalChanged: Signal.Signal<PathType, any, Action>,
 	SignalDestroyed: Signal.Signal<ClientClass<T>>,
 	SignalMessage: Signal.Signal<any, boolean>,
-	
+
 	--[[
 		Send messages to server, as long as Object is active.
 	]]
@@ -168,73 +224,78 @@ export type ClientClass<T = any> = {
 		Listen messages from server, as long as Object is active.
 	]]
 	OnMessage: (self: ClientClass<T>, Callback: (Message: any) -> (), Unreliable: boolean?) -> Signal.Connection,
-	
-	--[[
-		Listen to any changes related to the path.
-	]]
-	OnChange: (self: ClientClass<T>, Path: PathType, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
-	
-	--[[
-		Listen to only changes on this path.	
-	]]
-	OnSet: (self: ClientClass<T>, Path: PathType, Callback: (Value: any) -> ()) -> Signal.Connection,
 
-	GetPathProxy: (self: ClientClass<T>, Path: PathType?) -> ClientProxyType,
+	_raw: {},
 }
 
-type ProxyType = {
-	Insert: (self: ProxyType, Value: any, Index: number?) -> (),
-	Remove: (self: ProxyType, Index: number?) -> (),
-	SetValues: (self: ProxyType, Values: {[PathType]: any}) -> ()
+type ProxyMethodsServer<Data = any> = {
+	__call: (
+		(any) -> Data
+	),
 }
-type ProxyTypeAny = {
-	Insert: (self: ProxyTypeAny, Value: any, Index: number?) -> (),
-	Remove: (self: ProxyTypeAny, Index: number?) -> (),
-	SetValues: (self: ProxyTypeAny, Values: {[PathType]: any}) -> (),
-	[any]: any,
+type ArrayProxyMethodsServer<T = any, Data = any> = {
+	__index: {
+		Insert: (self: any, Value: T, Index: number?) -> (),
+		Remove: (self: any, Index: number?) -> (),
+	},
+	__call: (
+		(any) -> Data
+	),
 }
+
+type function ComputeTypeServer(Origin: type)
+	local function Do(Type: type)
+		local Indexer = Type:is("table") and Type:readindexer()
+		local New = types.newtable()
+
+		if Indexer then
+			New:setindexer(Indexer.index, Do(Indexer.result))
+			New:setmetatable(ArrayProxyMethodsServer(Indexer.result, Type))
+		else
+			New:setmetatable(ProxyMethodsServer(Type))
+		end
+
+		if not Type:is("table") then
+			return Type
+		end
+
+		for i,v in Type:properties() do
+			if v.read then
+				New:setreadproperty(i, Do(v.read))
+			end
+			if v.write then
+				New:setwriteproperty(i, v.write)
+			end
+		end
+
+		return New
+	end
+
+	return Do(Origin)
+end
 
 export type ServerClass<T = any, Children = {}> = {
 	Id: number,
-	Data: T,
+	Data: ComputeTypeServer<T>,
 	Tags: {string},
 	Identifier: string?,
-	
+
 	--[[
 		Whether the object is not destroyed.
 	]]
 	Active: boolean?,
-	
+
 	IncludeList: {[Player]: boolean},
 	ExcludeList: {[Player]: boolean},
 
 	Parent: any?,
 	Children: Children,
-	
-	ReplicateMode: "All"|"None",
-	
-	SignalMessage: Signal.Signal<any, boolean, Player>,
-	
-	Set: (self: ServerClass<T, Children>, Path: PathType, Value: any) -> (),
-	--[[
-		Sets the key-value 'Values' pairs at the provided path.
-	]]
-	SetValues: (self: ServerClass<T, Children>, Path: PathType, Values: {[PathType]: any}) -> (),
-	Get: (self: ServerClass<T, Children>, Path: PathType, IgnoreLast: number?) -> any,
-	
-	--[[
-		Returns a shallow table proxy which intercepts reads/writes, applying changes at the given path.
-	]]
-	GetShallowProxy: (
-		<A>(self: ServerClass<T, Children>, Path: PathType?, TypeofValue: A) -> ProxyType & A
-	) & (
-		<A>(self: ServerClass<T, Children>, Path: PathType) -> ProxyTypeAny
-	) & (
-		(self: ServerClass<T, Children>) -> ProxyType & T
-	),
 
+	ReplicateMode: "All"|"None",
+
+	SignalMessage: Signal.Signal<any, boolean, Player>,
 	IsTarget: (self: ServerClass<T, Children>, Player: Player) -> boolean?,
-	
+
 	--[[
 		Assigns a parent object, the child will copy parent's replication parameters.
 	]]
@@ -243,10 +304,7 @@ export type ServerClass<T = any, Children = {}> = {
 	) & (
 		(self: ServerClass<T, Children>) -> () -- Removes the parent.
 	),
-	
-	Insert: (self: ServerClass<T, Children>, Path: PathType, Value: any, Index: number?) -> (),
-	Remove: (self: ServerClass<T, Children>, Path: PathType, Index: number?) -> (),
-	
+
 	--[[
 		Replicates the Object to all Ready Players.
 		Clears the Include/Exclude lists.
@@ -256,7 +314,7 @@ export type ServerClass<T = any, Children = {}> = {
 		Adds the specified player to the replication.
 	]]
 	Subscribe: (self: ServerClass<T, Children>, Player: Player) -> ServerClass<T, Children>,
-	
+
 	--[[
 		Removes replication from all players.
 		Clears Include/Exclude lists.
@@ -266,7 +324,7 @@ export type ServerClass<T = any, Children = {}> = {
 		Removes the specified player from the replication.
 	]]
 	Unsubscribe: (self: ServerClass<T, Children>, Player: Player) -> (),
-	
+
 	--[[
 		Send a message to all replicated clients.
 	]]
@@ -275,7 +333,7 @@ export type ServerClass<T = any, Children = {}> = {
 		Listen to the messages of any of the replicated clients.
 	]]
 	OnMessage: (self: ServerClass<T, Children>, Callback: (Player: Player, Message: any) -> (), Player: Player?, Unreliable: boolean?) -> Signal.Connection,
-	
+
 	--[[
 		Iterates through all replicated players.
 	]]
@@ -286,6 +344,7 @@ export type ServerClass<T = any, Children = {}> = {
 	Destroy: (self: ServerClass<T, Children>) -> (),
 
 	_creation: {},
+	_raw: {},
 }
 
 return Shared

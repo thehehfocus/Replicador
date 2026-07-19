@@ -1,29 +1,30 @@
 --!optimize 2
 
-const Module = {}
+local Module = {}
 
 --== Services ==--
-const Players = game:GetService("Players")
-const RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 
 --== Dependencies ==--
-const Shared = require("./Shared")
-const Signal = require("./Signal")
+local Shared = require("./Shared")
+local Signal = require("./Signal")
+local MakeProxy = require("./MakeProxy")
 
 --== Variables ==--
 local Ids = 0
 local IsInit = false
 
-const SignalKeys = {
+local SignalKeys = {
 	"SignalMessage",
 }
-const TableKeys = {
+local TableKeys = {
 	"Children",
 	"IncludeList",
 	"ExcludeList",
 }
 
-const Class = {}
+local Class = {}
 Class.__index = function(self, Key)
 	local Existing = Class[Key]
 	if Existing then
@@ -43,22 +44,22 @@ end
 type PathType = Shared.PathType
 export type Class<T = {}, Children = {}> = Shared.ServerClass<T, Children>
 
-const ReadyPlayers = {} :: { [Player]: boolean }
-const Objects = {} :: { [number]: Class }
-const Identifiers = {} :: { [string]: Class }
+local ReadyPlayers = {} :: { [Player]: boolean }
+local Objects = {} :: { [number]: Class }
+local Identifiers = {} :: { [string]: Class }
 
 Module.SignalPlayerAdded = Signal.new() :: Signal.Signal<Player>
 Module.SignalPlayerRemoved = Signal.new() :: Signal.Signal<Player>
 
 --== Script ==--
-const function CreateForPlayer(Creation, Player: Player)
+local function CreateForPlayer(Creation, Player: Player)
 	Shared.Packets.ObjectCreated.sendTo(Creation, Player)
 end
-const function DestroyForPlayer(Id: number, Player: Player)
+local function DestroyForPlayer(Id: number, Player: Player)
 	Shared.Packets.ObjectDestroyed.sendTo(Id, Player)
 end
 
-const function OnPlayerAdded(Player: Player)
+local function OnPlayerAdded(Player: Player)
 	ReadyPlayers[Player] = true
 
 	for i, v in Objects do
@@ -70,7 +71,7 @@ const function OnPlayerAdded(Player: Player)
 
 	Module.SignalPlayerAdded:Fire(Player)
 end
-const function OnPlayerRemoving(Player: Player)
+local function OnPlayerRemoving(Player: Player)
 	ReadyPlayers[Player] = nil
 
 	for i, v in Objects do
@@ -81,7 +82,7 @@ const function OnPlayerRemoving(Player: Player)
 	Module.SignalPlayerRemoved:Fire(Player)
 end
 
-const function IterateGroup(self: Class, Func: (self: Class) -> ())
+local function IterateGroup(self: Class, Func: (self: Class) -> ())
 	Func(self)
 
 	local Children = rawget(self, "Children")
@@ -92,7 +93,58 @@ const function IterateGroup(self: Class, Func: (self: Class) -> ())
 	end
 end
 
-const function Init()
+local function Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
+	local Data = if notraw then self.Data else self._raw
+	for i = 1, #Path - (IgnoreLast or 0) do
+		Data = Data[Path[i]]
+	end
+	return Data
+end
+local function Set(self: Class, Path: PathType, Value: any)
+	local Pointer = Get(self, Path, 1)
+	Pointer[Path[#Path]] = Value
+
+	Path = Shared.PathToString(Path)
+	Value = type(Value) == "table" and table.clone(Value) or Value -- Ensuring Value is immutable.
+	local Info = { self.Id, Path, Value }
+
+	self:IterateTargets(function(Player)
+		Shared.Packets.Set.sendTo(Info, Player)
+	end)
+end
+local function Insert(self: Class, Path: PathType, Value: any, Index: number?)
+	local Table = Get(self, Path)
+
+	Index = Index or #Table + 1
+	table.insert(Table, Index, Value)
+
+	table.insert(Path, Index)
+	Path = Shared.PathToString(Path)
+
+	Value = type(Value) == "table" and table.clone(Value) or Value
+	local Info = { self.Id, Path, Value }
+
+	self:IterateTargets(function(Player)
+		Shared.Packets.Insert.sendTo(Info, Player)
+	end)
+end
+local function Remove(self: Class, Path: PathType, Index: number?)
+	local Table = Get(self, Path)
+	Index = Index or #Table
+
+	table.remove(Table, Index)
+
+	table.insert(Path, Index)
+	Path = Shared.PathToString(Path)
+
+	local Info = { self.Id, Path }
+
+	self:IterateTargets(function(Player)
+		Shared.Packets.Remove.sendTo(Info, Player)
+	end)
+end
+
+local function Init()
 	if IsInit then
 		return
 	end
@@ -148,6 +200,20 @@ function Module.WaitForReadyPlayer(Player: Player): boolean?
 	return ReadyPlayers[Player]
 end
 
+local ProxyMethods = {
+	Insert = function(Proxy, Value, Index)
+		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
+		local Path = MakeProxy.TracePath(Proxy)
+		return Insert(Object, Path, Value, Index)
+	end,
+	Remove = function(Proxy, Index)
+		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
+		local Path = MakeProxy.TracePath(Proxy)
+		return Remove(Object, Path, Index)
+	end,
+	GetRaw = MakeProxy.GetData,
+}
+
 --== Class ==--
 function Module.Register<T>(Props: {
 	Data: T,
@@ -173,10 +239,25 @@ function Module.Register<T>(Props: {
 	NewObject.Data = Data
 	NewObject.Tags = Tags or {}
 
+	NewObject.Data = MakeProxy.new(Data, {
+		SetCallback = function(Parent, Key, Value)
+			local Path = MakeProxy.TracePath(Parent)
+			table.insert(Path, Key)
+			Set(NewObject, Path, Value)
+		end,
+		IndexMethods = ProxyMethods,
+		CallFunction = function(Proxy)
+			return MakeProxy.GetValue(Proxy)
+		end,
+		Identifier = NewObject.Id,
+		IgnoreNonTableValues = true,
+	})
+
 	NewObject.Active = true
 	NewObject.ReplicateMode = "None"
 
-	NewObject._creation = { NewObject.Id, NewObject.Data, NewObject.Tags, NewObject.Identifier }
+	NewObject._raw = Data
+	NewObject._creation = { NewObject.Id, NewObject._raw, NewObject.Tags, NewObject.Identifier }
 
 	Objects[Ids] = NewObject
 	if Identifier then
@@ -211,119 +292,9 @@ function Class.IterateTargets(self: Class, Callback: (Player: Player) -> ())
 	end
 end
 
---[[
-	[1]: Path,
-	[2]: Object,
-	[3]: UsePath,
---]]
-local proxyMT = {
-	Insert = function(proxy, Value, Index)
-		local Path = rawget(proxy, 1) or {} :: PathType
-		local Object = rawget(proxy, 2) :: Class
-
-		Object:Insert(Path, Value, Index)
-	end,
-	Remove = function(proxy, Index)
-		local Path = rawget(proxy, 1) or {} :: PathType
-		local Object = rawget(proxy, 2) :: Class
-
-		Object:Remove(Path, Index)
-	end,
-	SetValues = function(proxy, Values)
-		local Path = rawget(proxy, 1) or {} :: PathType
-		local Object = rawget(proxy, 2) :: Class
-
-		Object:SetValues(Path, Values)
-	end,
-}
-proxyMT.__index = function(proxy, Key)
-	local Existing = proxyMT[Key]
-	if Existing then
-		return Existing
-	end
-
-	local Path = rawget(proxy, 1) :: PathType
-	local Object = rawget(proxy, 2) :: Class
-
-	return Object:Get(Path)[Key]
-end
-proxyMT.__newindex = function(proxy, Key, Value)
-	local UsePath = rawget(proxy, 3) :: number?
-	local Object = rawget(proxy, 2) :: Class
-	local Path = rawget(proxy, 1) :: PathType
-
-	if UsePath then
-		Path[UsePath] = Key
-		Object:Set(Path, Value)
-		Path[UsePath] = nil
-	else
-		Object:Set({ Key }, Value)
-	end
-end
-function Class.GetShallowProxy(self: Class, Path: PathType?)
-	Path = Path and table.clone(Path)
-
-	local Len = Path and #Path
-	local UsePath
-	if Len and Len > 0 then
-		UsePath = Len + 1
-	end
-
-	local Proxy = setmetatable({
-		Path,
-		self,
-		UsePath,
-	}, proxyMT)
-
-	return Proxy
-end
-
 function Class.IsTarget(self: Class, Player: Player): boolean?
 	return ReadyPlayers[Player]
 		and if self.ReplicateMode == "All" then not self.ExcludeList[Player] else self.IncludeList[Player]
-end
-
---== Set & Get ==--
-function Class.Set(self: Class, Path: PathType, Value: any, DontReplicate: boolean?)
-	Path = table.clone(Path)
-
-	local Pointer = self:Get(Path, 1)
-	Pointer[Path[#Path]] = Value
-
-	Path = Shared.PathToString(Path)
-	Value = type(Value) == "table" and table.clone(Value) or Value -- Ensuring Value is immutable.
-	local Info = { self.Id, Path, Value }
-
-	self:IterateTargets(function(Player)
-		Shared.Packets.Set.sendTo(Info, Player)
-	end)
-end
-function Class.SetValues(self: Class, Path: PathType, Values: { [PathType]: any })
-	Path = table.clone(Path)
-
-	local Pointer = self:Get(Path)
-
-	local NewValues = {}
-	for Key, Value in Values do
-		Pointer[Key] = Value
-
-		Key = Shared.TypeToString(Key)
-		NewValues[Key] = type(Value) == "table" and table.clone(Value) or Value
-	end
-
-	Path = Shared.PathToString(Path)
-	local Info = { self.Id, Path, NewValues }
-
-	self:IterateTargets(function(Player)
-		Shared.Packets.SetValues.sendTo(Info, Player)
-	end)
-end
-function Class.Get(self: Class, Path: PathType, IgnoreLast: number?): any
-	local Data = self.Data
-	for i = 1, #Path - (IgnoreLast or 0) do
-		Data = Data[Path[i]]
-	end
-	return Data
 end
 
 --== Hierarchy ==--
@@ -375,41 +346,6 @@ function Class.SetParent(self: Class, Parent: Class?, ChildIndex: any?)
 	end)
 
 	return self
-end
-
---== Table Operations ==--
-function Class.Insert(self: Class, Path: PathType, Value: any, Index: number?)
-	Path = table.clone(Path)
-	local Table = self:Get(Path)
-
-	Index = Index or #Table + 1
-	table.insert(Table, Index, Value)
-
-	table.insert(Path, Index)
-	Path = Shared.PathToString(Path)
-
-	Value = type(Value) == "table" and table.clone(Value) or Value
-	local Info = { self.Id, Path, Value }
-
-	self:IterateTargets(function(Player)
-		Shared.Packets.Insert.sendTo(Info, Player)
-	end)
-end
-function Class.Remove(self: Class, Path: PathType, Index: number?)
-	Path = table.clone(Path)
-	local Table = self:Get(Path)
-	Index = Index or #Table
-
-	table.remove(Table, Index)
-
-	table.insert(Path, Index)
-	Path = Shared.PathToString(Path)
-
-	local Info = { self.Id, Path }
-
-	self:IterateTargets(function(Player)
-		Shared.Packets.Remove.sendTo(Info, Player)
-	end)
 end
 
 --== Replication ==--
