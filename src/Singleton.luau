@@ -10,7 +10,7 @@ const SingletonReplicationError = function()
 	error(`Cannot add targets to a singleton.`)
 end
 
-return function<T>(Identifier: string, Data: T, Player: Player?)
+local Singleton = function<T>(Identifier: string, Data: T, Player: Player?)
 	if IsServer then
 		Identifier ..= Player.UserId
 
@@ -43,4 +43,8 @@ return function<T>(Identifier: string, Data: T, Player: Player?)
 
 		return Object
 	end
-end :: (<T>(Id: string, DataTemplate: T) -> Shared.ClientClass<T>) & (<T>(Id: string, Data: T, Player: Player) -> Shared.ServerClass<T>?)
+end
+
+type Singleton = (<T>(Id: string, DataTemplate: T) -> Shared.ClientClass<T>) & (<T>(Id: string, Data: T, Player: Player) -> Shared.ServerClass<T>?)
+
+return Singleton :: Singleton

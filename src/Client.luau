@@ -76,11 +76,13 @@ local function CheckImpl(SetPath, Action, TargetPath, TargetAction)
 	return true
 end
 local function OnSet(self: Class, Path: PathType, Callback: (Value: any) -> ()): Signal.Connection
+	local OldValue = self:Get(Path)
 	return self.SignalChanged:Connect(function(SetPath, Value, Action)
 		if not CheckImpl(SetPath, Action, Path, "Set") then
 			return
 		end
-		Callback(Value)
+		Callback(Value, OldValue)
+		OldValue = Value
 	end)
 end
 local function OnInsert(self: Class, Path: PathType, Callback: (Value: any, Index: any) -> ()): Signal.Connection

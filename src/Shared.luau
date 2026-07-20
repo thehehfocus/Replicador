@@ -37,13 +37,6 @@ if BytenetMax then
 						[3] = BytenetMax.optional(BytenetMax.unknown)
 					}
 				}),
-				SetValues = BytenetMax.definePacket({
-					value = BytenetMax.struct{
-						[1] = IdType,
-						[2] = BytenetMax.array(BytenetMax.string),
-						[3] = BytenetMax.map(BytenetMax.string, BytenetMax.unknown)
-					},
-				}),
 
 				RequestData = BytenetMax.definePacket({
 					value = BytenetMax.nothing,
@@ -87,7 +80,6 @@ else
 			ObjectDestroyed = RemoteWrapper.RegisterEvent("ObjectDestroyed"),
 
 			Set = RemoteWrapper.RegisterEvent("Set"),
-			SetValues = RemoteWrapper.RegisterEvent("SetValues"),
 			RequestData = RemoteWrapper.RegisterEvent("RequestData"),
 
 			Insert = RemoteWrapper.RegisterEvent("Insert"),
@@ -140,7 +132,7 @@ export type Action = "Set"|"Insert"|"Remove"
 
 type ProxyMethodsClient<Data = any> = {
 	__index: {
-		OnSet: (self: any, Callback: (Value: Data) -> ()) -> Signal.Connection,
+		OnSet: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
 		OnChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
 	},
 	__call: (
@@ -149,7 +141,7 @@ type ProxyMethodsClient<Data = any> = {
 }
 type ArrayProxyMethodsClient<T = any, Data = any> = {
 	__index: {
-		OnSet: (self: any, Callback: (Value: Data) -> ()) -> Signal.Connection,
+		OnSet: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
 		OnChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
 		OnInsert: (self: any, Callback: (Value: T, Index: number) -> ()) -> Signal.Connection,
 		OnRemove: (self: any, Callback: (Index: number) -> ()) -> Signal.Connection,
@@ -158,14 +150,15 @@ type ArrayProxyMethodsClient<T = any, Data = any> = {
 		(any) -> Data
 	)
 }
-type ProxyValueMethodsClient<T> = {
+type ProxyValueMethodsClient<Data> = {
 	__index: {
-		OnSet: (self: any, Callback: (Value: T) -> ()) -> Signal.Connection,
+		OnSet: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
 	},
 	__call: (
-		(any) -> T
+		(any) -> Data
 	),
 }
+type ValueBaseClient<Data> = (any) -> Data
 type function ComputeTypeClient(Origin: type)
 	local function Do(Type: type)
 		local Indexer = Type:is("table") and Type:readindexer()
