@@ -14,22 +14,28 @@ type Params = {
 	IgnoreNonTableValues: boolean?,
 }
 
+local TempDisableCallback = 0
+
 local function Set(Proxy, Key, Value)
 	local ProxyMT = getmetatable(Proxy)
 	local Params: Params = ProxyMT[PARAMS_KEY]
+	local Callback = Params.SetCallback
 
 	local Children = ProxyMT[CHILDREN_KEY]
 
-	local Child = Children and Children[Key]
-	if Child then
-		-- Remove child if already exists at this key.
-		Children[Key] = nil
-		getmetatable(Child)[PARENT_KEY] = nil
-	end
-
 	-- Assign the value to the actual table
 	local OriginalValue = ProxyMT[ORIG_KEY]
-	OriginalValue[Key] = Value
+	if type(OriginalValue) == "table" then
+		OriginalValue[Key] = Value
+	end
+
+	local Child = Children and Children[Key]
+	if Child then
+		local ChildMT = getmetatable(Child)
+		ChildMT[ORIG_KEY] = Value
+		ChildMT[CHILDREN_KEY] = nil
+		return Callback and TempDisableCallback < 1 and Callback(Proxy, Key, Value) 
+	end
 
 	if not Params.IgnoreNonTableValues or type(Value) == "table" then
 		-- Make value a proxy.
@@ -47,10 +53,7 @@ local function Set(Proxy, Key, Value)
 		NewMT[INDEX_KEY] = Key
 	end
 
-	local Callback = Params.SetCallback
-	if Callback then
-		Callback(Proxy, Key, Value)
-	end
+	return Callback and TempDisableCallback < 1 and Callback(Proxy, Key, Value) 
 end
 
 local function __len(Proxy)
@@ -85,24 +88,28 @@ function Module.new<T>(
 
 	local IndexMethods = Params.IndexMethods
 
-	local _t = type(OriginalValue)
 	Metatable.__index = function(_, Key)
 		local Children = Metatable[CHILDREN_KEY]
+		local OriginalValue = Metatable[ORIG_KEY]
 		local Child = Children and Children[Key]
 		if Child then
 			return Child
 		end
 
-		local OrigAtKey
-		if _t == "table" then
-			OrigAtKey = OriginalValue[Key]
-			if not Params.IgnoreNonTableValues or type(OrigAtKey) == "table" then
-				Set(Proxy, Key, OrigAtKey)
-				return Metatable[CHILDREN_KEY][Key]
-			end
+		local Method = IndexMethods and IndexMethods[Key]
+		if Method ~= nil then
+			return Method
 		end
 
-		return IndexMethods and IndexMethods[Key] or OrigAtKey
+		local OrigAtKey = type(OriginalValue) == "table" and OriginalValue[Key] or nil
+		if not Params.IgnoreNonTableValues or type(OrigAtKey) == "table" then
+			TempDisableCallback += 1
+			Set(Proxy, Key, OrigAtKey)
+			TempDisableCallback -= 1
+			return Metatable[CHILDREN_KEY][Key]
+		end
+
+		return OrigAtKey
 	end
 	Metatable.__newindex = function(_, Key, Value)
 		Set(Proxy, Key, Value)

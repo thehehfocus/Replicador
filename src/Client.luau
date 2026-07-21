@@ -76,7 +76,8 @@ local function CheckImpl(SetPath, Action, TargetPath, TargetAction)
 	return true
 end
 local function OnSet(self: Class, Path: PathType, Callback: (Value: any) -> ()): Signal.Connection
-	local OldValue = self:Get(Path)
+	local Success, OldValue = pcall(self.Get, self, Path)
+	OldValue = if Success then OldValue else nil
 	return self.SignalChanged:Connect(function(SetPath, Value, Action)
 		if not CheckImpl(SetPath, Action, Path, "Set") then
 			return
@@ -108,12 +109,9 @@ local ProxyMethods = {
 		local Path = MakeProxy.TracePath(Proxy)
 		return OnChange(Object, Path, Callback)
 	end,
-	OnSet = function(Proxy, Callback, Key)
+	OnSet = function(Proxy, Callback)
 		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
 		local Path = MakeProxy.TracePath(Proxy)
-		if Key then
-			table.insert(Path, Key)
-		end
 		return OnSet(Object, Path, Callback)
 	end,
 	OnInsert = function(Proxy, Callback)

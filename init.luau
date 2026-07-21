@@ -6,7 +6,14 @@ export type ClientClass<T = {}> = Client.Class<T>
 export type ServerClass<T = {}, Children = {}> = Server.Class<T, Children>
 
 local Lib = {
+	--[=[
+		ClientSide API for the library.
+	]=]
 	Client = Client,
+
+	--[=[
+		ServerSide API for the library.
+	]=]
 	Server = Server,
 	
 	--[=[
@@ -32,7 +39,7 @@ local Lib = {
 		end)
 		```
 		@param Identifier string - Singleton string, must not overlap with other singletons.
-		@param Data T - The data replicated to the player. / It is required that Data table has same signature on both client and server, and does not contain nil values.
+		@param Data T - The data replicated to the player.
 		@param Player Player? - Target of the singleton. On server only.
 		@return ClientClass - Client object.
 		@return ServerClass - An object with locked replication properties, targeted on one player. 
