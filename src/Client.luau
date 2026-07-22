@@ -355,7 +355,7 @@ if RunService:IsClient() then
 	Init()
 end
 
-Module.Get = function(Identifier: string): Class?
+Module.Get = function<T>(Identifier: string, DataTemplate: T?): Class<T>?
 	return Identifiers[Identifier]
 end
 Module.GetTagged = function(Tag: string | { string }, Id: number?): Class | { Class }?
@@ -454,7 +454,7 @@ Module.OnRemovedTagged = function(Tags: string | { string }, Callback: (Removed:
 	return ObjectRemoved:Connect(Handler)
 end
 
-Module.AwaitFor = function(Identifier: string)
+Module.AwaitFor = function<T>(Identifier: string, DataTemplate: T?): Shared.ClientClass<T>
 	local Already = Module.Get(Identifier)
 	if Already then
 		return Already
@@ -462,7 +462,7 @@ Module.AwaitFor = function(Identifier: string)
 
 	return ObjectAdded:Wait(IdentifierImpl(Identifier))
 end
-Module.AwaitForTagged = function(Tags: string | { string }): Class
+Module.AwaitForTagged = function<T>(Tags: string | { string }, DataTemplate: T?): Shared.ClientClass<T>
 	local Already = Module.GetTagged(Tags)
 
 	local _, _nextAlready = next(Already)

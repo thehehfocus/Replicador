@@ -1,3 +1,5 @@
+--!optimize 2
+
 local Module = {}
 
 local PARENT_KEY = "◘p"
@@ -56,14 +58,8 @@ local function Set(Proxy, Key, Value)
 	return Callback and TempDisableCallback < 1 and Callback(Proxy, Key, Value) 
 end
 
-local function __len(Proxy)
-	return #Module.GetValue(Proxy)
-end
-local function __tostring(Proxy)
+local function __tostring()
 	return "(Proxy object)"
-end
-local function __iter(Proxy)
-	return pairs(Module.GetValue())
 end
 
 function Module.new<T>(
@@ -78,7 +74,9 @@ function Module.new<T>(
 ): T
 	local Proxy = {}
 
-	local Metatable = {}
+	local Metatable = {
+		__tostring = __tostring
+	}
 	Metatable[PARAMS_KEY] = Params
 	Metatable[ORIG_KEY] = OriginalValue
 
@@ -115,9 +113,6 @@ function Module.new<T>(
 		Set(Proxy, Key, Value)
 	end
 	Metatable.__call = Params.CallFunction
-	Metatable.__len = __len
-	Metatable.__tostring = __tostring
-	Metatable.__iter = __iter
 
 	setmetatable(Proxy, Metatable)
 
