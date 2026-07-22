@@ -1,8 +1,14 @@
 # Replicador
-Simple library for replication structure.
-Easy API, good control.
+Advanced library for server authoritative to reactive-client replication.
+
+Abandons the idea of string paths, provides really comfortable API with full intellisense. As well as being rather lightweight. 
+
+Module constructs auto replication, types and methods on paths of any depth.
+
+Has proper tag/identifier management, replication settings, parent-child hierarchy and tagged groups.
 
 Wally link: [here](https://wally.run/package/thehehfocus/replicador)
+Docs: soon, maybe?
 
 
 ## Example use
