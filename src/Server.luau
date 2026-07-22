@@ -211,7 +211,6 @@ local ProxyMethods = {
 		local Path = MakeProxy.TracePath(Proxy)
 		return Remove(Object, Path, Index)
 	end,
-	GetRaw = MakeProxy.GetData,
 }
 
 --== Class ==--

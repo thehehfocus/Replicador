@@ -133,7 +133,8 @@ export type Action = "Set"|"Insert"|"Remove"
 type ProxyMethodsClient<Data = any> = {
 	__index: {
 		OnSet: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
-		OnChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
+		OnValueChange: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
+		OnDescendantChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
 	},
 	__call: (
 		(any) -> Data
@@ -142,7 +143,8 @@ type ProxyMethodsClient<Data = any> = {
 type ArrayProxyMethodsClient<T = any, Data = any> = {
 	__index: {
 		OnSet: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
-		OnChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
+		OnValueChange: (self: any, Callback: (Value: Data, OldValue: Data) -> (), Depth: number?) -> Signal.Connection,
+		OnDescendantChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
 		OnInsert: (self: any, Callback: (Value: T, Index: number) -> ()) -> Signal.Connection,
 		OnRemove: (self: any, Callback: (Index: number) -> ()) -> Signal.Connection,
 	},
@@ -153,12 +155,12 @@ type ArrayProxyMethodsClient<T = any, Data = any> = {
 type ProxyValueMethodsClient<Data> = {
 	__index: {
 		OnSet: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
+		OnValueChange: (self: any, Callback: (Value: Data, OldValue: Data) -> (), Depth: number?) -> Signal.Connection,
 	},
 	__call: (
 		(any) -> Data
 	),
 }
-type ValueBaseClient<Data> = (any) -> Data
 type function ComputeTypeClient(Origin: type)
 	local function Do(Type: type)
 		local Indexer = Type:is("table") and Type:readindexer()
