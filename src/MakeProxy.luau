@@ -1,5 +1,4 @@
 --!optimize 2
-
 local Module = {}
 
 local PARENT_KEY = "◘p"
@@ -35,7 +34,14 @@ local function Set(Proxy, Key, Value)
 	if Child then
 		local ChildMT = getmetatable(Child)
 		ChildMT[ORIG_KEY] = Value
-		ChildMT[CHILDREN_KEY] = nil
+		local ChildChildren = ChildMT[CHILDREN_KEY]
+		if ChildChildren then
+			TempDisableCallback += 1
+			for i,v in ChildChildren do
+				Set(Child, i, Value[i])
+			end
+			TempDisableCallback -= 1
+		end
 		return Callback and TempDisableCallback < 1 and Callback(Proxy, Key, Value) 
 	end
 

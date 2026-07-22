@@ -55,8 +55,8 @@ local function OnDescendantChange(
 	end)
 end
 local function OnValueChange(self: Class, Path: PathType, Callback: (Value: any, OldValue: any) -> (), Depth: number?): Signal.Connection
-	local Success, PrevValue = pcall(self.Get, self, Path)
-	PrevValue = if Success then PrevValue else nil
+	local Value = self:Get(Path, nil, true)
+	local PrevValue = Value()
 
 	local CheckPath = if Depth then table.clone(Path) else nil
 	if Depth then
@@ -65,7 +65,7 @@ local function OnValueChange(self: Class, Path: PathType, Callback: (Value: any,
 		end
 	end
 
-	return self.SignalChanged:Connect(function(SetPath, Value, Action)
+	return self.SignalChanged:Connect(function(SetPath)
 		if CheckPath then
 			for i,v in CheckPath do
 				if v ~= SetPath[i] then
@@ -74,9 +74,7 @@ local function OnValueChange(self: Class, Path: PathType, Callback: (Value: any,
 			end
 		end
 
-		local Success, NewValue = pcall(self.Get, self, Path)
-		NewValue = if Success then NewValue else nil
-		
+		local NewValue = Value()
 		if PrevValue ~= NewValue then
 			Callback(NewValue, PrevValue)
 			PrevValue = NewValue

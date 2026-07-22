@@ -32,9 +32,14 @@ end
 -- Simple set!
 -- No manual path typing + Autocompletion and Intellisense.
 Object.Data.EquippedSlot = 1
-Object.Data.Slots[3] = "Sword"
 Object.Data.Equipment.Head = "Helmet"
-Object.Data.Slots:Insert("Potion", 1)
+Object.Data.Slots:Insert({Name = "Potion"}, 1)
+
+task.wait(3)
+
+Object.Data.Slots[1] = {
+	Name = "PotionOverride"
+}
 ```
 
 Client:
@@ -67,6 +72,11 @@ end)
 
 Object.Data.Slots:OnInsert(function(Value, Index) -- Runs whenever an insertion method is called on the table.
 	print(`Inserted a slot {Value} at {Index}`)
+end)
+
+local Name = Object.Data.Slots[1].Name -- We can cache the path proxies, even if they dont have a value yet.
+Name:OnValueChange(function(Value, OldValue)
+	print(Value, OldValue)
 end)
 ```
 
