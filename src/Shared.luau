@@ -130,62 +130,76 @@ export type PathType = {string}|{number}|{string|number}
 
 export type Action = "Set"|"Insert"|"Remove"
 
-type ProxyMethodsClient<Data = any> = {
-	__index: {
-		OnSet: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
-		OnValueChange: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
-		OnDescendantChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
-	},
-	__call: (
-		(any) -> Data
-	)
+type Disconnect = (Disconnect: nil) -> ()
+
+export type Call<Data> = (
+	({}) -> Data
+) & (
+	({}, Data) -> ()
+)
+
+type DictMethodsClient<Data = any, Key = any, Value = any> = {
+	OnKeyAdded: (self: any, Callback: (Key: Key, Value: Value) -> ()) -> Disconnect,
+	OnKeyRemoved: (self: any, Callback: (Key: Key, OldValue: Value) -> ()) -> Disconnect,
+
+	OnChange: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Disconnect,
 }
-type ArrayProxyMethodsClient<T = any, Data = any> = {
-	__index: {
-		OnSet: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
-		OnValueChange: (self: any, Callback: (Value: Data, OldValue: Data) -> (), Depth: number?) -> Signal.Connection,
-		OnDescendantChange: (self: any, Callback: (Value: any, Action: Action, Path: PathType) -> ()) -> Signal.Connection,
-		OnInsert: (self: any, Callback: (Value: T, Index: number) -> ()) -> Signal.Connection,
-		OnRemove: (self: any, Callback: (Index: number) -> ()) -> Signal.Connection,
-	},
-	__call: (
-		(any) -> Data
-	)
+type ArrayMethodsClient<Data = any, Value = any> = {
+	OnKeyAdded: (self: any, Callback: (Key: number, Value: Value) -> ()) -> Disconnect,
+	OnKeyRemoved: (self: any, Callback: (Key: number, OldValue: Value) -> ()) -> Disconnect,
+
+	OnChange: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Disconnect,
+
+	OnInsert: (self: any, Callback: (Value: Value, Index: number) -> ()) -> Disconnect,
+	OnRemove: (self: any, Callback: (RemovedValue: Value, Index: number) -> ()) -> Disconnect
 }
-type ProxyValueMethodsClient<Data> = {
-	__index: {
-		OnSet: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Signal.Connection,
-		OnValueChange: (self: any, Callback: (Value: Data, OldValue: Data) -> (), Depth: number?) -> Signal.Connection,
-	},
-	__call: (
-		(any) -> Data
-	),
+type ValueMethodsClient<Data> = {
+	OnChange: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Disconnect,
 }
+type CallClient<Data> = Call<Data>
+
 type function ComputeTypeClient(Origin: type)
 	local function Do(Type: type)
-		local Indexer = Type:is("table") and Type:readindexer()
+		local OrigType = types.copy(Type)
+		local IsTable = Type:is("table")
+		local Indexer = IsTable and Type:readindexer()
 		local New = types.newtable()
+
+		if IsTable then
+			for i,v in Type:properties() do
+				if v.read then
+					New:setreadproperty(i, Do(v.read))
+				end
+				--if v.write then
+				--	New:setwriteproperty(i, v.write)
+				--end
+			end
+		end
+
+		local MetatableType = nil
 
 		if Indexer then
 			New:setindexer(Indexer.index, Do(Indexer.result))
-			New:setmetatable(ArrayProxyMethodsClient(Indexer.result, Type))
-		elseif not Type:is("table") then
-			New:setmetatable(ProxyValueMethodsClient(Type))
+			if Indexer.index:is("number") then
+				MetatableType = ArrayMethodsClient(OrigType, Indexer.result)
+			else
+				MetatableType = DictMethodsClient(OrigType, Indexer.index, Indexer.result)
+			end
+		elseif not IsTable then
+			MetatableType = ValueMethodsClient(OrigType)
 		else
-			New:setmetatable(ProxyMethodsClient(Type))
+			MetatableType = DictMethodsClient(OrigType, types.any, types.any)
 		end
+
+		local __index = types.singleton("__index")
+		local __call = types.singleton("__call")
+		New:setmetatable(types.newtable({
+			[__index] = MetatableType,
+			[__call] = CallClient(OrigType)
+		}))
 
 		if not Type:is("table") then
 			return New
-		end
-
-		for i,v in Type:properties() do
-			if v.read then
-				New:setreadproperty(i, Do(v.read))
-			end
-			--if v.write then
-			--	New:setwriteproperty(i, v.write)
-			--end
 		end
 
 		return New
@@ -207,7 +221,6 @@ export type ClientClass<T = any> = {
 
 	Get: (self: ClientClass<T>, Path: PathType, IgnoreLast: number?) -> any,
 
-	SignalChanged: Signal.Signal<PathType, any, Action>,
 	SignalDestroyed: Signal.Signal<ClientClass<T>>,
 	SignalMessage: Signal.Signal<any, boolean>,
 
@@ -223,36 +236,22 @@ export type ClientClass<T = any> = {
 	_raw: {},
 }
 
-type ProxyMethodsServer<Data = any> = {
-	__call: (
-		(any) -> Data
-	),
+type ArrayMethodsServer<T = any, Data = any> = {
+	Insert: (self: any, Value: T, Index: number?) -> (),
+	Remove: (self: any, Index: number?) -> (),
 }
-type ArrayProxyMethodsServer<T = any, Data = any> = {
-	__index: {
-		Insert: (self: any, Value: T, Index: number?) -> (),
-		Remove: (self: any, Index: number?) -> (),
-	},
-	__call: (
-		(any) -> Data
-	),
-}
+type CallServer<Data> = Call<Data>
 
 type function ComputeTypeServer(Origin: type)
 	local function Do(Type: type)
-		local Indexer = Type:is("table") and Type:readindexer()
-		local New = types.newtable()
-
-		if Indexer then
-			New:setindexer(Indexer.index, Do(Indexer.result))
-			New:setmetatable(ArrayProxyMethodsServer(Indexer.result, Type))
-		else
-			New:setmetatable(ProxyMethodsServer(Type))
-		end
-
-		if not Type:is("table") then
+		local IsTable = Type:is("table")
+		if not IsTable then
 			return Type
 		end
+
+		local OrigType = types.copy(Type)
+		local Indexer = IsTable and Type:readindexer()
+		local New = types.newtable()
 
 		for i,v in Type:properties() do
 			if v.read then
@@ -262,6 +261,24 @@ type function ComputeTypeServer(Origin: type)
 				New:setwriteproperty(i, v.write)
 			end
 		end
+
+		local MetatableType = nil
+
+		if Indexer then
+			New:setindexer(Indexer.index, Do(Indexer.result))
+			if Indexer.index:is("number") then
+				MetatableType = ArrayMethodsServer(Indexer.result, OrigType)
+			end
+		else
+			-- MetatableType = TableMethodsServer(OrigType)
+		end
+
+		local __index = types.singleton("__index")
+		local __call = types.singleton("__call")
+		New:setmetatable(types.newtable({
+			[__index] = MetatableType,
+			[__call] = CallServer(OrigType)
+		}))
 
 		return New
 	end

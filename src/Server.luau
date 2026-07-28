@@ -245,11 +245,18 @@ function Module.Register<T>(Props: {
 			Set(NewObject, Path, Value)
 		end,
 		IndexMethods = ProxyMethods,
-		CallFunction = function(Proxy)
-			return MakeProxy.GetValue(Proxy)
+		CallFunction = function(Proxy, ...)
+			if select("#", ...) > 0 then
+				local Value = ...
+				local Path = MakeProxy.TracePath(Proxy)
+				Set(NewObject, Path, Value)
+				
+				return nil
+			else
+				return MakeProxy.GetValue(Proxy)
+			end
 		end,
 		Identifier = NewObject.Id,
-		IgnoreNonTableValues = true,
 	})
 
 	NewObject.Active = true
