@@ -42,7 +42,20 @@ Class.__index = function(self, Key)
 end
 
 type PathType = Shared.PathType
-export type Class<T = {}, Children = {}> = Shared.ServerClass<T, Children>
+export type Class<T = {}> = Shared.ServerClass<T> & {
+	ReplicateMode: "All"|"None",
+
+	IncludeList: {[Player]: boolean},
+	ExcludeList: {[Player]: boolean},
+
+	Parent: any?,
+	Children: any,
+
+	SignalMessage: Signal.Signal<any, boolean, Player>,
+
+	_creation: {},
+	_raw: {},
+}
 
 local ReadyPlayers = {} :: { [Player]: boolean }
 local Objects = {} :: { [number]: Class }
@@ -93,27 +106,8 @@ local function IterateGroup(self: Class, Func: (self: Class) -> ())
 	end
 end
 
-local function Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
-	local Data = if notraw then self.Data else self._raw
-	for i = 1, #Path - (IgnoreLast or 0) do
-		Data = Data[Path[i]]
-	end
-	return Data
-end
-local function Set(self: Class, Path: PathType, Value: any)
-	local Pointer = Get(self, Path, 1)
-	Pointer[Path[#Path]] = Value
-
-	Path = Shared.PathToString(Path)
-	Value = type(Value) == "table" and table.clone(Value) or Value -- Ensuring Value is immutable.
-	local Info = { self.Id, Path, Value }
-
-	self:IterateTargets(function(Player)
-		Shared.Packets.Set.sendTo(Info, Player)
-	end)
-end
 local function Insert(self: Class, Path: PathType, Value: any, Index: number?)
-	local Table = Get(self, Path)
+	local Table = self:Get(Path)
 
 	Index = Index or #Table + 1
 	table.insert(Table, Index, Value)
@@ -129,9 +123,9 @@ local function Insert(self: Class, Path: PathType, Value: any, Index: number?)
 	end)
 end
 local function Remove(self: Class, Path: PathType, Index: number?)
-	local Table = Get(self, Path)
-	Index = Index or #Table
+	local Table = self:Get(Path)
 
+	Index = Index or #Table
 	table.remove(Table, Index)
 
 	table.insert(Path, Index)
@@ -215,7 +209,7 @@ local ProxyMethods = {
 
 --== Class ==--
 function Module.Register<T>(Props: {
-	Data: T,
+	Data: T & {},
 	Identifier: string?,
 	Tags: string | { string }?,
 	[string]: any,
@@ -232,24 +226,24 @@ function Module.Register<T>(Props: {
 
 	Ids += 1
 
-	local NewObject = setmetatable({}, Class)
+	local NewObject = setmetatable({}, Class) :: Class
 	NewObject.Id = Ids
 	NewObject.Identifier = Props.Identifier
 	NewObject.Data = Data
 	NewObject.Tags = Tags or {}
-
+	
 	NewObject.Data = MakeProxy.new(Data, {
 		SetCallback = function(Parent, Key, Value)
 			local Path = MakeProxy.TracePath(Parent)
 			table.insert(Path, Key)
-			Set(NewObject, Path, Value)
+			NewObject:Set(Path, Value)
 		end,
 		IndexMethods = ProxyMethods,
 		CallFunction = function(Proxy, ...)
 			if select("#", ...) > 0 then
 				local Value = ...
 				local Path = MakeProxy.TracePath(Proxy)
-				Set(NewObject, Path, Value)
+				NewObject:Set(Path, Value)
 				
 				return nil
 			else
@@ -257,6 +251,7 @@ function Module.Register<T>(Props: {
 			end
 		end,
 		Identifier = NewObject.Id,
+		IgnoreNonTableValues = true,
 	})
 
 	NewObject.Active = true
@@ -279,6 +274,26 @@ end
 
 function Module.Is(Object: any): Class | false
 	return type(Object) == "table" and getmetatable(Object) == Class and Object
+end
+
+function Class.Set(self: Class, Path: PathType, Value: any)
+	local Pointer = self:Get(Path, 1)
+	Pointer[Path[#Path]] = Value
+
+	Path = Shared.PathToString(Path)
+	Value = type(Value) == "table" and table.clone(Value) or Value -- Ensuring Value is immutable.
+	local Info = { self.Id, Path, Value }
+
+	self:IterateTargets(function(Player)
+		Shared.Packets.Set.sendTo(Info, Player)
+	end)
+end
+function Class.Get(self: Class, Path: PathType, IgnoreLast: number?): any
+	local Data = self.Data
+	for i = 1, #Path - (IgnoreLast or 0) do
+		Data = Data[Path[i]]
+	end
+	return Data
 end
 
 --== Utility ==--
@@ -305,7 +320,7 @@ end
 
 --== Hierarchy ==--
 function Class.SetParent(self: Class, Parent: Class?, ChildIndex: any?)
-	if not Parent and not ChildIndex then
+	if not Parent and not ChildIndex and self.Parent then
 		for i, v in self.Parent.Children do
 			if v == self then
 				self.Parent.Children[i] = nil

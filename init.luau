@@ -1,10 +1,14 @@
+--!strict
 local Client = require("@self/src/Client")
 local Server = require("@self/src/Server")
 local Shared = require("@self/src/Shared")
 local Singleton = require("@self/src/Singleton")
 
-export type ClientClass<T = {}> = Client.Class<T>
-export type ServerClass<T = {}, Children = {}> = Server.Class<T, Children>
+export type ClientClass<T = any> = Shared.ClientClass<T>
+export type ServerClass<T = any> = Shared.ServerClass<T>
+
+export type ComputeTypeClient<T> = Shared.ComputeTypeClient<T>
+export type ComputeTypeServer<T> = Shared.ComputeTypeServer<T>
 
 export type Callable<T> = Shared.Call<T>
 
@@ -20,32 +24,7 @@ local Lib = {
 	Server = Server,
 	
 	--[=[
-		Example usage.
-
-		* Server:
-		```lua
-		local Data = Utils.Data
-		local Object = Singleton("Example", Data, Player)
-		assert(Object)
-
-		Object.Data.Property = Value
-		Object.Data.Array:Insert(Value, Index)
-		```
-
-		* Client:
-		```lua
-		local Data = Utils.Data
-		local Object = Singleton("Example", Data)
-
-		Object.Data.Property:OnSet(function(Value)
-			-- ...
-		end)
-		```
-		@param Identifier string - Singleton string, must not overlap with other singletons.
-		@param Data T - The data replicated to the player.
-		@param Player Player? - Target of the singleton. On server only.
-		@return ClientClass - Client object.
-		@return ServerClass - An object with locked replication properties, targeted on one player. 
+		Singleton one instance per-player wrapper
 	]=]
 	Singleton = Singleton,
 }

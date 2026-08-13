@@ -133,21 +133,21 @@ export type Action = "Set"|"Insert"|"Remove"
 type Disconnect = (Disconnect: nil) -> ()
 
 export type Call<Data> = (
-	({}) -> Data
+	(self: any) -> Data
 ) & (
-	({}, Data) -> ()
+	<A>(self: any, Set: Data&A) -> A
 )
+type Mt<T, Data> = {
+	__index: T,
+	__call: Call<Data>
+}
 
 type DictMethodsClient<Data = any, Key = any, Value = any> = {
-	OnKeyAdded: (self: any, Callback: (Key: Key, Value: Value) -> ()) -> Disconnect,
-	OnKeyRemoved: (self: any, Callback: (Key: Key, OldValue: Value) -> ()) -> Disconnect,
-
+	OnKeySet: (self: any, Callback: (Key: Key, Value: Value) -> ()) -> Disconnect,
 	OnChange: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Disconnect,
 }
 type ArrayMethodsClient<Data = any, Value = any> = {
-	OnKeyAdded: (self: any, Callback: (Key: number, Value: Value) -> ()) -> Disconnect,
-	OnKeyRemoved: (self: any, Callback: (Key: number, OldValue: Value) -> ()) -> Disconnect,
-
+	OnKeySet: (self: any, Callback: (Key: number, Value: Value) -> ()) -> Disconnect,
 	OnChange: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Disconnect,
 
 	OnInsert: (self: any, Callback: (Value: Value, Index: number) -> ()) -> Disconnect,
@@ -156,56 +156,42 @@ type ArrayMethodsClient<Data = any, Value = any> = {
 type ValueMethodsClient<Data> = {
 	OnChange: (self: any, Callback: (Value: Data, OldValue: Data) -> ()) -> Disconnect,
 }
-type CallClient<Data> = Call<Data>
 
-type function ComputeTypeClient(Origin: type)
-	local function Do(Type: type)
-		local OrigType = types.copy(Type)
-		local IsTable = Type:is("table")
-		local Indexer = IsTable and Type:readindexer()
-		local New = types.newtable()
+export type function ComputeTypeClient(Type: type)
+	local OrigType = types.copy(Type)
+	local IsTable = Type:is("table")
+	local Indexer = IsTable and Type:readindexer()
+	local New = types.newtable()
 
-		if IsTable then
-			for i,v in Type:properties() do
-				if v.read then
-					New:setreadproperty(i, Do(v.read))
-				end
-				--if v.write then
-				--	New:setwriteproperty(i, v.write)
-				--end
-			end
-		end
+	local MetatableType = nil
 
-		local MetatableType = nil
-
-		if Indexer then
-			New:setindexer(Indexer.index, Do(Indexer.result))
-			if Indexer.index:is("number") then
-				MetatableType = ArrayMethodsClient(OrigType, Indexer.result)
-			else
-				MetatableType = DictMethodsClient(OrigType, Indexer.index, Indexer.result)
-			end
-		elseif not IsTable then
-			MetatableType = ValueMethodsClient(OrigType)
+	if Indexer then
+		New:setindexer(Indexer.index, ComputeTypeClient(Indexer.result))
+		if Indexer.index:is("number") then
+			MetatableType = ArrayMethodsClient(OrigType, Indexer.result)
 		else
-			MetatableType = DictMethodsClient(OrigType, types.any, types.any)
+			MetatableType = DictMethodsClient(OrigType, Indexer.index, Indexer.result)
 		end
+	elseif not IsTable then
+		MetatableType = ValueMethodsClient(OrigType)
+	else
+		MetatableType = DictMethodsClient(OrigType, types.any, types.any)
+	end
+	
+	New:setmetatable(Mt(MetatableType, OrigType))
 
-		local __index = types.singleton("__index")
-		local __call = types.singleton("__call")
-		New:setmetatable(types.newtable({
-			[__index] = MetatableType,
-			[__call] = CallClient(OrigType)
-		}))
-
-		if not Type:is("table") then
-			return New
+	if IsTable then
+		for i,v in Type:properties() do
+			if v.read then
+				New:setreadproperty(i, ComputeTypeClient(v.read))
+			end
+			if v.write then
+				New:setwriteproperty(i, v.read)
+			end
 		end
-
-		return New
 	end
 
-	return Do(Origin)
+	return New
 end
 
 export type ClientClass<T = any> = {
@@ -219,10 +205,10 @@ export type ClientClass<T = any> = {
 	]]
 	Active: boolean?,
 
+	Set: (self: ClientClass<T>, Path: PathType, Value: any) -> (),
 	Get: (self: ClientClass<T>, Path: PathType, IgnoreLast: number?) -> any,
 
 	SignalDestroyed: Signal.Signal<ClientClass<T>>,
-	SignalMessage: Signal.Signal<any, boolean>,
 
 	--[[
 		Send messages to server, as long as Object is active.
@@ -232,61 +218,51 @@ export type ClientClass<T = any> = {
 		Listen messages from server, as long as Object is active.
 	]]
 	OnMessage: (self: ClientClass<T>, Callback: (Message: any) -> (), Unreliable: boolean?) -> Signal.Connection,
-
-	_raw: {},
 }
 
 type ArrayMethodsServer<T = any, Data = any> = {
 	Insert: (self: any, Value: T, Index: number?) -> (),
 	Remove: (self: any, Index: number?) -> (),
 }
-type CallServer<Data> = Call<Data>
 
-type function ComputeTypeServer(Origin: type)
-	local function Do(Type: type)
-		local IsTable = Type:is("table")
-		if not IsTable then
-			return Type
+export type function ComputeTypeServer(Type: type)
+	local OrigType = types.copy(Type)
+	local IsTable = Type:is("table")
+	local Indexer = IsTable and Type:readindexer()
+	local New = types.newtable()
+
+	local MetatableType = nil
+
+	if Indexer then
+		New:setindexer(Indexer.index, ComputeTypeServer(Indexer.result))
+		if Indexer.index:is("number") then
+			MetatableType = ArrayMethodsServer(OrigType, Indexer.result)
+		else
+			-- MetatableType = DictMethodsServer(OrigType, Indexer.index, Indexer.result)
 		end
+	elseif not IsTable then
+		-- MetatableType = ValueMethodsServer(OrigType)
+	else
+		-- MetatableType = DictMethodsServer(OrigType, types.any, types.any)
+	end
+	
+	New:setmetatable(Mt(MetatableType or types.newtable(), OrigType))
 
-		local OrigType = types.copy(Type)
-		local Indexer = IsTable and Type:readindexer()
-		local New = types.newtable()
-
+	if IsTable then
 		for i,v in Type:properties() do
 			if v.read then
-				New:setreadproperty(i, Do(v.read))
+				New:setreadproperty(i, ComputeTypeServer(v.read))
 			end
 			if v.write then
-				New:setwriteproperty(i, v.write)
+				New:setwriteproperty(i, v.read)
 			end
 		end
-
-		local MetatableType = nil
-
-		if Indexer then
-			New:setindexer(Indexer.index, Do(Indexer.result))
-			if Indexer.index:is("number") then
-				MetatableType = ArrayMethodsServer(Indexer.result, OrigType)
-			end
-		else
-			-- MetatableType = TableMethodsServer(OrigType)
-		end
-
-		local __index = types.singleton("__index")
-		local __call = types.singleton("__call")
-		New:setmetatable(types.newtable({
-			[__index] = MetatableType,
-			[__call] = CallServer(OrigType)
-		}))
-
-		return New
 	end
 
-	return Do(Origin)
+	return New
 end
 
-export type ServerClass<T = any, Children = {}> = {
+export type ServerClass<T = any> = {
 	Id: number,
 	Data: ComputeTypeServer<T>,
 	Tags: {string},
@@ -297,66 +273,60 @@ export type ServerClass<T = any, Children = {}> = {
 	]]
 	Active: boolean?,
 
-	IncludeList: {[Player]: boolean},
-	ExcludeList: {[Player]: boolean},
+	Set: (self: ServerClass<T>, Path: PathType, Value: any) -> (),
+	Get: (self: ServerClass<T>, Path: PathType, IgnoreLast: number?) -> (),
 
-	Parent: any?,
-	Children: Children,
-
-	ReplicateMode: "All"|"None",
-
-	SignalMessage: Signal.Signal<any, boolean, Player>,
-	IsTarget: (self: ServerClass<T, Children>, Player: Player) -> boolean?,
+	--[[
+		If object is replicated to the player.
+	]]
+	IsTarget: (self: ServerClass<T>, Player: Player) -> boolean?,
 
 	--[[
 		Assigns a parent object, the child will copy parent's replication parameters.
 	]]
 	SetParent: (
-		(self: ServerClass<T, Children>, Parent: any, ChildIndex: any) -> ServerClass<T, Children>
+		(self: ServerClass<T>, Parent: any, ChildIndex: any) -> ServerClass<T>
 	) & (
-		(self: ServerClass<T, Children>) -> () -- Removes the parent.
+		(self: ServerClass<T>) -> () -- Removes the parent.
 	),
 
 	--[[
 		Replicates the Object to all Ready Players.
 		Clears the Include/Exclude lists.
 	]]
-	Replicate: (self: ServerClass<T, Children>) -> ServerClass<T, Children>,
+	Replicate: (self: ServerClass<T>) -> ServerClass<T>,
 	--[[
 		Adds the specified player to the replication.
 	]]
-	Subscribe: (self: ServerClass<T, Children>, Player: Player) -> ServerClass<T, Children>,
+	Subscribe: (self: ServerClass<T>, Player: Player) -> ServerClass<T>,
 
 	--[[
 		Removes replication from all players.
 		Clears Include/Exclude lists.
 	]]
-	Unreplicate: (self: ServerClass<T, Children>) -> (),
+	Unreplicate: (self: ServerClass<T>) -> (),
 	--[[
 		Removes the specified player from the replication.
 	]]
-	Unsubscribe: (self: ServerClass<T, Children>, Player: Player) -> (),
+	Unsubscribe: (self: ServerClass<T>, Player: Player) -> (),
 
 	--[[
 		Send a message to all replicated clients.
 	]]
-	Message: (self: ServerClass<T, Children>, Message: any, Player: Player?, Unreliable: boolean?) -> (),
+	Message: (self: ServerClass<T>, Message: any, Player: Player?, Unreliable: boolean?) -> (),
 	--[[
 		Listen to the messages of any of the replicated clients.
 	]]
-	OnMessage: (self: ServerClass<T, Children>, Callback: (Player: Player, Message: any) -> (), Player: Player?, Unreliable: boolean?) -> Signal.Connection,
+	OnMessage: (self: ServerClass<T>, Callback: (Player: Player, Message: any) -> (), Player: Player?, Unreliable: boolean?) -> Signal.Connection,
 
 	--[[
 		Iterates through all replicated players.
 	]]
-	IterateTargets: (self: ServerClass<T, Children>, Callback: (Player: Player) -> ()) -> (),
+	IterateTargets: (self: ServerClass<T>, Callback: (Player: Player) -> ()) -> (),
 	--[[
 		Clears the replica and removes replication.
 	]]
-	Destroy: (self: ServerClass<T, Children>) -> (),
-
-	_creation: {},
-	_raw: {},
+	Destroy: (self: ServerClass<T>) -> (),
 }
 
 return Shared

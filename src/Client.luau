@@ -36,26 +36,21 @@ local ObjectAdded = Signal.new() :: Signal.Signal<Class>
 local ObjectRemoved = Signal.new() :: Signal.Signal<Class>
 
 type PathType = Shared.PathType
-export type Class<T = {}> = Shared.ClientClass<T>
+export type Class<T = {}> = Shared.ClientClass<T> & {
+	SignalMessage: Signal.Signal<any, boolean>,
+
+	_raw: {},
+}
 
 type Disconnect = (Disconnect: nil) -> ()
 
-local function OnKeyAdded(Proxy, Callback: (Key: any, Value: any) -> ()): Disconnect
+local function OnKeySet(Proxy, Callback: (Key: any, Value: any) -> ()): Disconnect
 	return MakeProxy.Connect(Proxy, function(Action, Key, Value)
-		if Action ~= "DescendantChange" or Value == nil then
+		if Action ~= "DescendantChange" then
 			return
 		end
 
 		Callback(Key, Value)
-	end)
-end
-local function OnKeyRemoved(Proxy, Callback: (Key: any, OldValue: any) -> ()): Disconnect
-	return MakeProxy.Connect(Proxy, function(Action, Key, Value, OldValue)
-		if Action ~= "DescendantChange" or Value ~= nil or OldValue == nil then
-			return
-		end
-
-		Callback(Key, OldValue)
 	end)
 end
 local function OnChange(Proxy, Callback: (Value: any, OldValue: any) -> ()): Disconnect
@@ -95,8 +90,7 @@ local ProxyMethods = {
 	OnChange = OnChange,
 	OnInsert = OnInsert,
 	OnRemove = OnRemove,
-	OnKeyAdded = OnKeyAdded,
-	OnKeyRemoved = OnKeyRemoved
+	OnKeySet = OnKeySet,
 }
 
 --== Script ==--
@@ -104,7 +98,11 @@ local function Register(Id: number, Data: any, Tags: { string }, Identifier: str
 	local Object = setmetatable({}, Class) :: Class
 	Object.Id = Id
 	Object.Data = MakeProxy.new(Data, {
-		SetCallback = nil,
+		SetCallback = function(Proxy, Key, Value)
+			local Path = MakeProxy.TracePath(Proxy)
+			local Pointer = Object:Get(Path, nil, true)
+			Pointer[Path[#Path]] = Value
+		end,
 		IndexMethods = ProxyMethods,
 		Identifier = Id,
 		CallFunction = function(Proxy, ...)
@@ -406,6 +404,10 @@ Module.AwaitForTagged = function<T>(Tags: string | { string }, DataTemplate: T?)
 	return ObjectAdded:Wait(Tags, TaggedImpl(Tags))
 end :: (Tags: string | { string }) -> Class
 
+function Class.Set(self: Class, Path: {PathType}, Value: any)
+	local Data = self:Get(Path, nil, true)
+	Data[Path[#Path]] = Value
+end
 function Class.Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
 	local Data = if notraw then self.Data else self._raw
 	for i = 1, #Path - (IgnoreLast or 0) do

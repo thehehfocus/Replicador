@@ -52,9 +52,7 @@ local function Set(Proxy, Key, Value)
 
 	-- Assign the value to the actual table
 	local OriginalValue = rawget(Proxy, ORIG_KEY)
-	local ShallowOldValue: any = nil
 	if type(OriginalValue) == "table" then
-		ShallowOldValue = OriginalValue[Key]
 		OriginalValue[Key] = Value
 	end
 
@@ -80,7 +78,7 @@ local function Set(Proxy, Key, Value)
 		IterateProxy(Child, function(Proxy)
 			FireProxyCallbacks(Proxy, "Set")
 		end)
-		FireProxyCallbacks(Proxy, "DescendantChange", Key, Value, ShallowOldValue)
+		FireProxyCallbacks(Proxy, "DescendantChange", Key, Value)
 	elseif not Params.IgnoreNonTableValues or type(Value) == "table" then
 		-- Make value a proxy.
 		local new = Module.new(Value, Params, true)
