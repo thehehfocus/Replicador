@@ -1,23 +1,23 @@
 --!optimize 2
 local Module = {}
 
-local PARENT_KEY = "◘p"
-local INDEX_KEY = "◘i"
-local CHILDREN_KEY = "◘c"
-local PARAMS_KEY = "◘pr"
-local ORIG_KEY = "◘o"
-local CALLBACKS_KEY = "◘ca"
+local ORIG_KEY = -1
+local PARAMS_KEY = -2
+local PARENT_KEY = -3
+local INDEX_KEY = -4
+local CHILDREN_KEY = -5
+local CALLBACKS_KEY = -6
 
 type Params = {
-	SetCallback: ({}, string | number, any | {}) -> (),
+	SetCallback: (Proxy: {}, Key: any, Value: any) -> ()?,
+	CallFunction: (Proxy: {}, ...any) -> ()?,
 	IndexMethods: {}?,
-	CallFunction: (...any) -> (),
 	Identifier: any,
-	IgnoreNonTableValues: boolean?,
+	IsServer: boolean?,
+	TempDisableSetCallback: number,
 }
 
-local TempDisableSetCallback = 0
-local TempDisableCallbacks = 0
+Module._ntvst = false
 
 local MT = {}
 
@@ -32,7 +32,8 @@ local function IterateProxy(Proxy: any, Function: (any) -> ())
 	end
 end
 local function FireProxyCallbacks(Proxy: any, Action: string, ...)
-	if TempDisableCallbacks > 0 then
+	local Params: Params = rawget(Proxy, PARAMS_KEY)
+	if Params.IsServer then
 		return
 	end
 
@@ -52,34 +53,31 @@ local function Set(Proxy, Key, Value)
 
 	-- Assign the value to the actual table
 	local OriginalValue = rawget(Proxy, ORIG_KEY)
-	if type(OriginalValue) == "table" then
+	if OriginalValue then
 		OriginalValue[Key] = Value
+	else
+		error("Attempt to index a nil proxy value.")
 	end
 
 	local Child = Children and Children[Key]
+
 	if Child then
 		rawset(Child, ORIG_KEY, Value)
 		local ChildChildren = rawget(Child, CHILDREN_KEY)
 
 		if ChildChildren then
-			if Params.IgnoreNonTableValues then
-				TempDisableSetCallback += 1
-			end
-
-			for i,v in ChildChildren do
+			for i, v in ChildChildren do
 				Set(Child, i, Value and Value[i])
 			end
-
-			if Params.IgnoreNonTableValues then
-				TempDisableSetCallback -= 1
-			end
 		end
-		
-		IterateProxy(Child, function(Proxy)
-			FireProxyCallbacks(Proxy, "Set")
-		end)
-		FireProxyCallbacks(Proxy, "DescendantChange", Key, Value)
-	elseif not Params.IgnoreNonTableValues or type(Value) == "table" then
+
+		if not Params.IsServer then
+			IterateProxy(Child, function(Proxy)
+				FireProxyCallbacks(Proxy, "Set")
+			end)
+			FireProxyCallbacks(Proxy, "DescendantChange", Key, Value)
+		end
+	elseif not Params.IsServer or type(Value) == "table" or Module._ntvst then
 		-- Make value a proxy.
 		local new = Module.new(Value, Params, true)
 		new[PARENT_KEY] = Proxy
@@ -92,16 +90,19 @@ local function Set(Proxy, Key, Value)
 		end
 		Children[Key] = new
 
-		FireProxyCallbacks(new, "Set")
-		FireProxyCallbacks(Proxy, "DescendantChange", Key, Value)
+		if not Params.IsServer then
+			FireProxyCallbacks(new, "Set")
+			FireProxyCallbacks(Proxy, "DescendantChange", Key, Value)
+		end
 	end
 
-	return Callback and TempDisableSetCallback < 1 and Callback(Proxy, Key, Value) 
+	if Callback and Params.TempDisableSetCallback < 1 then
+		Callback(Proxy, Key, Value)
+	end
 end
 
-MT.__index = function(Proxy, Key)
+function MT.__index(Proxy, Key)
 	local Children = rawget(Proxy, CHILDREN_KEY)
-	local OriginalValue = rawget(Proxy, ORIG_KEY)
 	local Child = Children and Children[Key]
 	if Child then
 		return Child
@@ -114,45 +115,38 @@ MT.__index = function(Proxy, Key)
 		return Method
 	end
 
+	local OriginalValue = rawget(Proxy, ORIG_KEY)
 	local OrigAtKey = type(OriginalValue) == "table" and OriginalValue[Key] or nil
-	if not Params.IgnoreNonTableValues or type(OrigAtKey) == "table" then
-		TempDisableSetCallback += 1
+
+	if not Params.IsServer or type(OrigAtKey) == "table" or Module._ntvst then
+		Params.TempDisableSetCallback += 1
 		Set(Proxy, Key, OrigAtKey)
-		TempDisableSetCallback -= 1
+		Params.TempDisableSetCallback -= 1
 
 		return rawget(Proxy, CHILDREN_KEY)[Key]
 	end
 
 	return OrigAtKey
 end
-MT.__newindex = function(Proxy, Key, Value)
+function MT.__newindex(Proxy, Key, Value)
 	Set(Proxy, Key, Value)
 end
-MT.__call = function(Proxy, ...)
+function MT.__call(Proxy, ...)
 	local Params: Params = rawget(Proxy, PARAMS_KEY)
 	return Params.CallFunction(Proxy, ...)
 end
-MT.__len = function(Proxy)
+function MT.__len(Proxy)
 	return #Module.GetValue(Proxy)
 end
 
-function Module.new<T>(
-	OriginalValue: T,
-	Params: {
-		SetCallback: ({}, string | number, any | {}) -> ()?,
-		IndexMethods: {}?,
-		CallFunction: (...any) -> ()?,
-		Identifier: any,
-		IgnoreNonTableValues: boolean?,
-	},
-	NMT: unknown?
-): T
+function Module.new<T>(OriginalValue: T, Params: Params, InternalCall: boolean?): T
+	Params.TempDisableSetCallback = Params.TempDisableSetCallback or 0
 	local Proxy = {
 		[PARAMS_KEY] = Params,
-		[ORIG_KEY] = OriginalValue
+		[ORIG_KEY] = OriginalValue,
 	}
 
-	if not NMT then
+	if not InternalCall then
 		setmetatable(Proxy, MT)
 	end
 
@@ -196,32 +190,39 @@ end
 function Module.GetValue(Proxy): {}
 	return Module.IsProxy(Proxy) and rawget(Proxy, ORIG_KEY)
 end
-function Module.SetValue(Proxy, Value)
-	local Parent = rawget(Proxy, PARENT_KEY)
-	if Parent then
-		local Orig = Parent[ORIG_KEY]
-		Orig[rawget(Proxy, INDEX_KEY)] = Value
-	end
+-- function Module.SetValue(Proxy, Value)
+-- 	local Parent = rawget(Proxy, PARENT_KEY)
+-- 	if Parent then
+-- 		local Orig = Parent[ORIG_KEY]
+-- 		Orig[rawget(Proxy, INDEX_KEY)] = Value
+-- 	end
 
-	rawset(Proxy, ORIG_KEY, Value)
-end
-function Module.GetParent(Proxy)
-	return Module.IsProxy(Proxy) and rawget(Proxy, PARENT_KEY)
-end
+-- 	rawset(Proxy, ORIG_KEY, Value)
+-- end
+-- function Module.GetParent(Proxy)
+-- return rawget(Proxy, PARENT_KEY)
+-- end
 function Module.GetIdentifier(Proxy)
-	local Params: Params = Module.IsProxy(Proxy) and rawget(Proxy, PARAMS_KEY)
+	local Params: Params = Module.IsProxy(Proxy)
 	return Params and Params.Identifier
 end
+-- function Module.GetKey(Proxy)
+-- 	return rawget(Proxy, INDEX_KEY)
+-- end
+-- function Module.ToggleSetCallback(Proxy, Increment: boolean?)
+-- 	local Params: Params = Module.IsProxy(Proxy)
+-- 	Params.TempDisableSetCallback += Increment and 1 or -1
+-- end
 
 function Module.Insert(Proxy, Value, Index)
 	local len = #Proxy
-	
+
 	for i = len, Index, -1 do
 		local Next = Proxy[i]
 		Proxy[i + 1] = Module.GetValue(Next) or Next
 	end
 	Proxy[Index] = Value
-	
+
 	FireProxyCallbacks(Proxy, "Insert", Value, Index)
 end
 function Module.Remove(Proxy, Index)

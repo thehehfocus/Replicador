@@ -11,22 +11,9 @@ local MakeProxy = require("./MakeProxy")
 --== Variables ==--
 local IsInit = false
 local SignalKeys = {
+	"SignalChanged",
 	"SignalDestroyed",
-	"SignalMessage",
 }
-
-local Class = {}
-Class.__index = function(self, Key)
-	local Existing = Class[Key]
-	if Existing then
-		return Existing
-	elseif table.find(SignalKeys, Key) then
-		local newSignal = Signal.new()
-		self[Key] = newSignal
-		return newSignal
-	end
-	return nil
-end
 
 local Objects = {} :: { [number]: Class }
 local Tagged = {} :: { [string]: { Class } }
@@ -35,62 +22,74 @@ local Identifiers = {} :: { [string]: Object }
 local ObjectAdded = Signal.new() :: Signal.Signal<Class>
 local ObjectRemoved = Signal.new() :: Signal.Signal<Class>
 
+local Class = {}
+function Class.__index(self: Class, Key)
+	local Existing = Class[Key]
+	if Existing then
+		return Existing
+	elseif table.find(SignalKeys, Key) then
+		local newSignal = Signal.new()
+		self[Key] = newSignal
+
+		if Key == "SignalChanged" then
+			self._changetrack = true
+		end
+
+		return newSignal
+	end
+
+	return nil
+end
+
 type PathType = Shared.PathType
 export type Class<T = {}> = Shared.ClientClass<T> & {
-	SignalMessage: Signal.Signal<any, boolean>,
-
 	_raw: {},
+	_changetrack: boolean?,
 }
 
 type Disconnect = (Disconnect: nil) -> ()
-
-local function OnKeySet(Proxy, Callback: (Key: any, Value: any) -> ()): Disconnect
-	return MakeProxy.Connect(Proxy, function(Action, Key, Value)
-		if Action ~= "DescendantChange" then
-			return
-		end
-
-		Callback(Key, Value)
-	end)
-end
-local function OnChange(Proxy, Callback: (Value: any, OldValue: any) -> ()): Disconnect
-	local OldValue = Proxy()
-	return MakeProxy.Connect(Proxy, function(Action)
-		if Action ~= "Set" then
-			return
-		end
-
-		local NewValue = Proxy()
-		if NewValue ~= OldValue then
-			Callback(NewValue, OldValue)
-			OldValue = NewValue
-		end
-	end)
-end
-local function OnInsert(Proxy, Callback: (Value: any, Index: any) -> ()): Disconnect
-	return MakeProxy.Connect(Proxy, function(Action, NewValue, Index)
-		if Action ~= "Insert" then
-			return
-		end
-
-		Callback(NewValue, Index)
-	end)
-end
-local function OnRemove(Proxy, Callback: (RemovedValue: any, Index: any) -> ()): Disconnect
-	return MakeProxy.Connect(Proxy, function(Action, RemovedValue, Index)
-		if Action ~= "Remove" then
-			return
-		end
-
-		Callback(RemovedValue, Index)
-	end)
-end
-
 local ProxyMethods = {
-	OnChange = OnChange,
-	OnInsert = OnInsert,
-	OnRemove = OnRemove,
-	OnKeySet = OnKeySet,
+	OnChange = function(Proxy, Callback: (Value: any, OldValue: any) -> ()): Disconnect
+		local OldValue = Proxy()
+		return MakeProxy.Connect(Proxy, function(Action)
+			if Action ~= "Set" then
+				return
+			end
+
+			local NewValue = Proxy()
+			if NewValue ~= OldValue then
+				Callback(NewValue, OldValue)
+				OldValue = NewValue
+			end
+		end)
+	end,
+	OnInsert = function(Proxy, Callback: (Value: any, Index: any) -> ()): Disconnect
+		return MakeProxy.Connect(Proxy, function(Action, NewValue, Index)
+			if Action ~= "Insert" then
+				return
+			end
+
+			Callback(NewValue, Index)
+		end)
+	end,
+	OnRemove = function(Proxy, Callback: (RemovedValue: any, Index: any) -> ()): Disconnect
+		return MakeProxy.Connect(Proxy, function(Action, RemovedValue, Index)
+			if Action ~= "Remove" then
+				return
+			end
+
+			Callback(RemovedValue, Index)
+		end)
+	end,
+	OnKeySet = function(Proxy, Callback: (Key: any, Value: any) -> ()): Disconnect
+		return MakeProxy.Connect(Proxy, function(Action, Key, Value)
+			if Action ~= "DescendantChange" then
+				return
+			end
+
+			Callback(Key, Value)
+		end)
+	end,
 }
 
 --== Script ==--
@@ -98,19 +97,19 @@ local function Register(Id: number, Data: any, Tags: { string }, Identifier: str
 	local Object = setmetatable({}, Class) :: Class
 	Object.Id = Id
 	Object.Data = MakeProxy.new(Data, {
-		SetCallback = function(Proxy, Key, Value)
-			local Path = MakeProxy.TracePath(Proxy)
-			local Pointer = Object:Get(Path, nil, true)
-			Pointer[Path[#Path]] = Value
-		end,
 		IndexMethods = ProxyMethods,
 		Identifier = Id,
 		CallFunction = function(Proxy, ...)
 			if select("#", ...) > 0 then
 				local Value = ...
-				local Path = MakeProxy.TracePath(Proxy)
-				local Pointer = Object:Get(Path, 1, true)
-				Pointer[Path[#Path]] = Value
+				if type(Value) == "function" then
+					Value = Value(MakeProxy.GetValue(Proxy))
+				end
+
+				local Parent = MakeProxy.GetParent(Proxy)
+				local Key = MakeProxy.GetKey(Proxy)
+
+				Parent[Key] = Value
 
 				return nil
 			else
@@ -195,7 +194,7 @@ local function Init()
 		local Id = Info
 
 		local Object = Objects[Id]
-		if not Object then
+		if Object == nil then
 			return
 		end
 
@@ -208,7 +207,7 @@ local function Init()
 		local Value = Info[3]
 
 		local Object = Objects[Id]
-		if not Object then
+		if Object == nil then
 			return
 		end
 
@@ -216,6 +215,10 @@ local function Init()
 		local Pointer = Object:Get(Path, 1, true)
 
 		Pointer[Path[#Path]] = Value
+
+		if Object._changetrack then
+			Object.SignalChanged:Fire(Path, Value, "Set")
+		end
 	end)
 
 	Shared.Packets.Insert.listen(function(Info)
@@ -224,7 +227,7 @@ local function Init()
 		local Value = Info[3]
 
 		local Object = Objects[Id]
-		if not Object then
+		if Object == nil then
 			return
 		end
 
@@ -233,6 +236,10 @@ local function Init()
 		local Index = Path[#Path]
 		local Pointer = Object:Get(Path, 1, true)
 		MakeProxy.Insert(Pointer, Value, Index)
+
+		if Object._changetrack then
+			Object.SignalChanged:Fire(Path, Value, "Insert")
+		end
 	end)
 	Shared.Packets.Remove.listen(function(Info)
 		local Id = Info[1]
@@ -248,34 +255,9 @@ local function Init()
 		local Index = Path[#Path]
 		local Pointer = Object:Get(Path, 1, true)
 		MakeProxy.Remove(Pointer, Index)
-	end)
 
-	Shared.Packets.Message.listen(function(Info)
-		local Id = Info[1]
-		local Message = Info[2]
-
-		local Object = Objects[Id]
-		if not Object then
-			return
-		end
-
-		local SignalMessage = rawget(Object, "SignalMessage")
-		if SignalMessage then
-			Object.SignalMessage:Fire(Message, false)
-		end
-	end)
-	Shared.Packets.URMessage.listen(function(Info)
-		local Id = Info[1]
-		local Message = Info[2]
-
-		local Object = Objects[Id]
-		if not Object then
-			return
-		end
-
-		local SignalMessage = rawget(Object, "SignalMessage")
-		if SignalMessage then
-			Object.SignalMessage:Fire(Message, true)
+		if Object._changetrack then
+			Object.SignalChanged:Fire(Path, nil, "Remove")
 		end
 	end)
 
@@ -286,7 +268,7 @@ if RunService:IsClient() then
 	Init()
 end
 
-Module.Get = function<T>(Identifier: string, DataTemplate: T?): Class<T>?
+function Module.Get<T>(Identifier: string, DataTemplate: T?): Class<T>?
 	return Identifiers[Identifier]
 end
 Module.GetTagged = function(Tag: string | { string }, Id: number?): Class | { Class }?
@@ -323,7 +305,7 @@ local function IdentifierImpl(Identifier: string, Callback)
 		return false
 	end
 end
-Module.OnNew = function(Identifier: string, Callback: (New: Class) -> (), CallOnExisting: boolean?): Signal.Connection
+function Module.OnNew(Identifier: string, Callback: (New: Class) -> (), CallOnExisting: boolean?): Signal.Connection
 	local Existing = Module.Get(Identifier)
 	if CallOnExisting and Existing then
 		Callback(Existing)
@@ -331,7 +313,7 @@ Module.OnNew = function(Identifier: string, Callback: (New: Class) -> (), CallOn
 
 	return ObjectAdded:Connect(IdentifierImpl(Identifier, Callback))
 end
-Module.OnRemoved = function(Identifier: string, Callback: (Removed: Class) -> ()): Signal.Connection
+function Module.OnRemoved(Identifier: string, Callback: (Removed: Class) -> ()): Signal.Connection
 	return ObjectRemoved:Connect(IdentifierImpl(Identifier, Callback))
 end
 
@@ -364,7 +346,7 @@ local function TaggedImpl(Tags: string | { string }, Callback)
 		end
 	end
 end
-Module.OnNewTagged = function(
+function Module.OnNewTagged(
 	Tags: string | { string },
 	Callback: (New: Class) -> (),
 	CallOnExisting: boolean?
@@ -379,13 +361,13 @@ Module.OnNewTagged = function(
 
 	return ObjectAdded:Connect(Handler)
 end
-Module.OnRemovedTagged = function(Tags: string | { string }, Callback: (Removed: Class) -> ()): Signal.Connection
+function Module.OnRemovedTagged(Tags: string | { string }, Callback: (Removed: Class) -> ()): Signal.Connection
 	local Handler = TaggedImpl(Tags, Callback)
 
 	return ObjectRemoved:Connect(Handler)
 end
 
-Module.AwaitFor = function<T>(Identifier: string, DataTemplate: T?): Shared.ClientClass<T>
+function Module.AwaitFor<T>(Identifier: string, DataTemplate: T?): Shared.ClientClass<T>
 	local Already = Module.Get(Identifier)
 	if Already then
 		return Already
@@ -393,7 +375,7 @@ Module.AwaitFor = function<T>(Identifier: string, DataTemplate: T?): Shared.Clie
 
 	return ObjectAdded:Wait(IdentifierImpl(Identifier))
 end
-Module.AwaitForTagged = function<T>(Tags: string | { string }, DataTemplate: T?): Shared.ClientClass<T>
+function Module.AwaitForTagged<T>(Tags: string | { string }, DataTemplate: T?): Class<T>
 	local Already = Module.GetTagged(Tags)
 
 	local _, _nextAlready = next(Already)
@@ -402,9 +384,9 @@ Module.AwaitForTagged = function<T>(Tags: string | { string }, DataTemplate: T?)
 	end
 
 	return ObjectAdded:Wait(Tags, TaggedImpl(Tags))
-end :: (Tags: string | { string }) -> Class
+end
 
-function Class.Set(self: Class, Path: {PathType}, Value: any)
+function Class.Set(self: Class, Path: { PathType }, Value: any)
 	local Data = self:Get(Path, nil, true)
 	Data[Path[#Path]] = Value
 end
@@ -414,26 +396,6 @@ function Class.Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boo
 		Data = Data[Path[i]]
 	end
 	return Data
-end
-
-function Class.Message(self: Class, Message: any, Unreliable: boolean?)
-	if not self.Active then
-		warn(`Object is not replicated.`)
-		warn(self)
-		return
-	end
-
-	local Messager = Unreliable and Shared.Packets.URMessage or Shared.Packets.Message
-	Messager.send({ self.Id, Message })
-end
-function Class.OnMessage(self: Class, Callback: (Message: any) -> (), Unreliable: boolean?)
-	return self.SignalMessage:Connect(function(Message, IsUnreliable)
-		if not IsUnreliable ~= not Unreliable then
-			return
-		end
-
-		Callback(Message)
-	end)
 end
 
 return Module

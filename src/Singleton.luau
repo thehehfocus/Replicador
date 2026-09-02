@@ -1,12 +1,12 @@
-const RunService = game:GetService("RunService")
-const Players = game:GetService("Players")
-const IsServer = RunService:IsServer()
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local IsServer = RunService:IsServer()
 
-const Client = require("./Client")
-const Server = require("./Server")
-const Shared = require("./Shared")
+local Client = IsServer or require("./Client")
+local Server = IsServer and require("./Server")
+local Shared = require("./Shared")
 
-const SingletonReplicationError = function()
+function SingletonReplicationError()
 	error(`Cannot add targets to a singleton.`)
 end
 
@@ -15,16 +15,13 @@ return {
 		if IsServer then
 			Identifier ..= Player.UserId
 
-			local Existing = Server.GetFromIdentifier(Identifier)
+			local Existing = Server.Get(Identifier)
 			if Existing then
 				return Existing
 			end
 
 			local Success = Server.WaitForReadyPlayer(Player)
-			if not Success then
-				warn(`Wait for player failed.`)
-				return
-			end
+			assert(Success, "Wait for player failed.")
 
 			local Object = Server.Register({
 				Identifier = Identifier,
@@ -44,12 +41,11 @@ return {
 
 			return Object
 		end
-	end :: (<T>(Identifier: string, DataTemplate: T) -> Shared.ClientClass<T>) & (<T>(Identifier: string, Data: T, Player: Player) -> Shared.ServerClass<T>?),
+	end :: (<T>(Identifier: string, DataTemplate: T & {}) -> Shared.ClientClass<T>) & (<T>(Identifier: string, Data: T & {}, Player: Player) -> Shared.ServerClass<T>),
 
 	get = function<T>(Identifier: string, DataTemplate: T?, Player: Player?)
-		return if Player then
-				Server.GetFromIdentifier(Identifier..Player.UserId)
-			else
-				Client.Get(Identifier)
-	end :: (<T>(Identifier: string, DataTemplate: T?) -> Shared.ClientClass<T>) & (<T>(Identifier: string, DataTemplate: T?, Player: Player) -> Shared.ServerClass<T>)
+		return if Player
+			then Server.GetFromIdentifier(Identifier .. Player.UserId)
+			else Client.Get(Identifier .. Players.LocalPlayer.UserId)
+	end :: (<T>(Identifier: string, DataTemplate: T?) -> Shared.ClientClass<T>?) & (<T>(Identifier: string, DataTemplate: T?, Player: Player) -> Shared.ServerClass<T>?),
 }

@@ -1,5 +1,5 @@
 # Replicador
-Advanced library for server authoritative to reactive-client replication.
+Advanced yet simple to use library for server authoritative to reactive-client replication.
 
 Module constructs auto replication, types and methods on paths of any depth.
 
@@ -10,6 +10,8 @@ Docs: soon, maybe?
 
 
 ## Example use
+- (using special singleton function, ensures there's only one object target, handles wait for player loading)
+
 Server:
 ```luau
 local Replicador = require(game.ReplicatedStorage.Replicador)
@@ -23,15 +25,7 @@ local Data = { -- Define data type, anything replicatable
 	},
 }
 
-local Object = Replicador.Server.Register({ -- Register the object, set Data, Identifier, Tags.
-	Identifier = "Test", 
-	Data = Data, 
-})
-
-local Success = Replicador.Server.WaitForReadyPlayer(Plr) -- Error handling.
-if Success then
-	Object:Subscribe(Plr)
-end
+local Object = Replicador.Singleton("Test", Data, Player) -- Player argument - overload and get ServerClass.
 
 -- Simple set!
 -- No manual path typing + Autocompletion and Intellisense.
@@ -60,7 +54,7 @@ local Data = {
 	},
 }
 
-local Object = Replicador.Client.AwaitFor("Test", Data)
+local Object = Replicador.Singleton("Test", Data) -- ClientClass with DataTemplate
 
 Object.Data.Slots:OnKeySet(function(Value, Action, Path) -- Runs when a child of the table changed value.
 	print(`Made a change at path: {Path}, with action: {Action}, and value: {Value}`)
@@ -78,18 +72,4 @@ local Name = Object.Data.Slots[1].Name -- We can cache the path proxies, even if
 Name:OnChange(function(Value, OldValue)
 	print(Value, OldValue)
 end)
-```
-
-## Or using special singleton function (ensures there's only one object target, handles wait for player loading):
-Server
-```luau
-local Object = Replicador.Singleton("Test", Data, Player) -- Player argument - overload and get ServerClass.
-if not Object then
-	return
-end
-```
-
-Client
-```luau
-local Object = Replicador.Singleton("Test", Data) -- ClientClass with DataTemplate
 ```

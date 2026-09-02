@@ -16,7 +16,7 @@ local Ids = 0
 local IsInit = false
 
 local SignalKeys = {
-	"SignalMessage",
+	"SignalChanged",
 }
 local TableKeys = {
 	"Children",
@@ -25,7 +25,7 @@ local TableKeys = {
 }
 
 local Class = {}
-Class.__index = function(self, Key)
+function Class.__index(self: Class, Key)
 	local Existing = Class[Key]
 	if Existing then
 		return Existing
@@ -36,6 +36,11 @@ Class.__index = function(self, Key)
 	elseif table.find(SignalKeys, Key) then
 		local newSignal = Signal.new()
 		self[Key] = newSignal
+
+		if Key == "SignalChanged" then
+			self._changetrack = true
+		end
+
 		return newSignal
 	end
 	return nil
@@ -43,18 +48,17 @@ end
 
 type PathType = Shared.PathType
 export type Class<T = {}> = Shared.ServerClass<T> & {
-	ReplicateMode: "All"|"None",
+	ReplicateMode: "All" | "None",
 
-	IncludeList: {[Player]: boolean},
-	ExcludeList: {[Player]: boolean},
+	IncludeList: { [Player]: boolean },
+	ExcludeList: { [Player]: boolean },
 
 	Parent: any?,
 	Children: any,
 
-	SignalMessage: Signal.Signal<any, boolean, Player>,
-
 	_creation: {},
 	_raw: {},
+	_changetrack: boolean?,
 }
 
 local ReadyPlayers = {} :: { [Player]: boolean }
@@ -106,9 +110,7 @@ local function IterateGroup(self: Class, Func: (self: Class) -> ())
 	end
 end
 
-local function Insert(self: Class, Path: PathType, Value: any, Index: number?)
-	local Table = self:Get(Path)
-
+local function Insert(self: Class, Table: any, Path: PathType, Value: any, Index: number?)
 	Index = Index or #Table + 1
 	table.insert(Table, Index, Value)
 
@@ -121,10 +123,12 @@ local function Insert(self: Class, Path: PathType, Value: any, Index: number?)
 	self:IterateTargets(function(Player)
 		Shared.Packets.Insert.sendTo(Info, Player)
 	end)
-end
-local function Remove(self: Class, Path: PathType, Index: number?)
-	local Table = self:Get(Path)
 
+	if self._changetrack then
+		self.SignalChanged:Fire(Path, Value, "Insert")
+	end
+end
+local function Remove(self: Class, Table: any, Path: PathType, Index: number?)
 	Index = Index or #Table
 	table.remove(Table, Index)
 
@@ -136,6 +140,10 @@ local function Remove(self: Class, Path: PathType, Index: number?)
 	self:IterateTargets(function(Player)
 		Shared.Packets.Remove.sendTo(Info, Player)
 	end)
+
+	if self._changetrack then
+		self.SignalChanged:Fire(Path, nil, "Remove")
+	end
 end
 
 local function Init()
@@ -159,59 +167,29 @@ local function Init()
 
 		OnPlayerRemoving(Player)
 	end)
-
-	Shared.Packets.Message.listen(function(Info, Player)
-		local Id = Info[1]
-		local Message = Info[2]
-
-		local Object = Objects[Id]
-		if not Object then
-			return
-		end
-
-		Object.SignalMessage:Fire(Message, false, Player)
-	end)
-	Shared.Packets.URMessage.listen(function(Info, Player)
-		local Id = Info[1]
-		local Message = Info[2]
-
-		local Object = Objects[Id]
-		if not Object then
-			return
-		end
-
-		Object.SignalMessage:Fire(Message, true, Player)
-	end)
 end
 if RunService:IsServer() then
 	Init()
-end
-
-function Module.WaitForReadyPlayer(Player: Player): boolean?
-	while not ReadyPlayers[Player] and Player.Parent do
-		task.wait()
-	end
-	return ReadyPlayers[Player]
 end
 
 local ProxyMethods = {
 	Insert = function(Proxy, Value, Index)
 		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
 		local Path = MakeProxy.TracePath(Proxy)
-		return Insert(Object, Path, Value, Index)
+		return Insert(Object, MakeProxy.GetValue(Proxy), Path, Value, Index)
 	end,
 	Remove = function(Proxy, Index)
 		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
 		local Path = MakeProxy.TracePath(Proxy)
-		return Remove(Object, Path, Index)
+		return Remove(Object, MakeProxy.GetValue(Proxy), Path, Index)
 	end,
 }
 
 --== Class ==--
 function Module.Register<T>(Props: {
-	Data: T & {},
+	Data: T,
 	Identifier: string?,
-	Tags: string | { string }?,
+	Tags: { string }?,
 	[string]: any,
 }): Class<T>
 	local Identifier = Props.Identifier
@@ -220,9 +198,6 @@ function Module.Register<T>(Props: {
 
 	assert(not (Identifier and Identifiers[Identifier]), `Object with identifier {Identifier} already exists.`)
 	assert(type(Data) == "table", "Data is required to be a table.")
-	if type(Tags) == "string" then
-		Tags = { Tags }
-	end
 
 	Ids += 1
 
@@ -231,33 +206,39 @@ function Module.Register<T>(Props: {
 	NewObject.Identifier = Props.Identifier
 	NewObject.Data = Data
 	NewObject.Tags = Tags or {}
-	
+
 	NewObject.Data = MakeProxy.new(Data, {
 		SetCallback = function(Parent, Key, Value)
 			local Path = MakeProxy.TracePath(Parent)
 			table.insert(Path, Key)
-			NewObject:Set(Path, Value)
+			NewObject:Set(Path, Value, MakeProxy.GetValue(Parent))
 		end,
 		IndexMethods = ProxyMethods,
 		CallFunction = function(Proxy, ...)
 			if select("#", ...) > 0 then
 				local Value = ...
-				local Path = MakeProxy.TracePath(Proxy)
-				NewObject:Set(Path, Value)
-				
+				if type(Value) == "function" then
+					Value = Value(MakeProxy.GetValue(Proxy))
+				end
+
+				local Parent = MakeProxy.GetParent(Proxy)
+				local Key = MakeProxy.GetKey(Proxy)
+
+				Parent[Key] = Value
+
 				return nil
 			else
 				return MakeProxy.GetValue(Proxy)
 			end
 		end,
 		Identifier = NewObject.Id,
-		IgnoreNonTableValues = true,
+		IsServer = true,
 	})
 
 	NewObject.Active = true
 	NewObject.ReplicateMode = "None"
 
-	NewObject._raw = Data
+	NewObject._raw = NewObject.Data()
 	NewObject._creation = { NewObject.Id, NewObject._raw, NewObject.Tags, NewObject.Identifier }
 
 	Objects[Ids] = NewObject
@@ -268,16 +249,22 @@ function Module.Register<T>(Props: {
 	return NewObject
 end
 
-function Module.GetFromIdentifier(Identifier: string): Class?
+function Module.Get<T>(Identifier: string, Template: T?): Class<T>?
 	return Identifiers[Identifier]
 end
 
+function Module.WaitForReadyPlayer(Player: Player): boolean?
+	while not ReadyPlayers[Player] and Player.Parent do
+		task.wait()
+	end
+	return ReadyPlayers[Player]
+end
 function Module.Is(Object: any): Class | false
 	return type(Object) == "table" and getmetatable(Object) == Class and Object
 end
 
-function Class.Set(self: Class, Path: PathType, Value: any)
-	local Pointer = self:Get(Path, 1)
+function Class.Set(self: Class, Path: PathType, Value: any, tbl: any)
+	local Pointer = tbl or self:Get(Path, 1)
 	Pointer[Path[#Path]] = Value
 
 	Path = Shared.PathToString(Path)
@@ -287,9 +274,13 @@ function Class.Set(self: Class, Path: PathType, Value: any)
 	self:IterateTargets(function(Player)
 		Shared.Packets.Set.sendTo(Info, Player)
 	end)
+
+	if self._changetrack then
+		self.SignalChanged:Fire(Path, Value, "Set")
+	end
 end
-function Class.Get(self: Class, Path: PathType, IgnoreLast: number?): any
-	local Data = self.Data
+function Class.Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
+	local Data = if notraw then self.Data else self._raw
 	for i = 1, #Path - (IgnoreLast or 0) do
 		Data = Data[Path[i]]
 	end
@@ -312,7 +303,6 @@ function Class.IterateTargets(self: Class, Callback: (Player: Player) -> ())
 		end
 	end
 end
-
 function Class.IsTarget(self: Class, Player: Player): boolean?
 	return ReadyPlayers[Player]
 		and if self.ReplicateMode == "All" then not self.ExcludeList[Player] else self.IncludeList[Player]
@@ -460,42 +450,6 @@ function Class.Unsubscribe(self: Class, Player: Player)
 	IterateGroup(self, function(Object)
 		local Info = Object.Id
 		DestroyForPlayer(Info, Player)
-	end)
-end
-
---== Messaging ==--
-function Class.Message(self: Class, Message: any, Player: Player?, Unreliable: boolean?)
-	local FoundPlayer = self.IncludeList[Player] or self.ReplicateMode == "All" and not self.ExcludeList[Player]
-	if not FoundPlayer then
-		warn(`Player {Player} is not subscribed to the object`)
-		warn(self)
-		return
-	end
-
-	local Messager = Unreliable and Shared.Packets.URMessage or Shared.Packets.Message
-	if Player then
-		Messager.sendTo({ self.Id, Message }, Player)
-	else
-		self:IterateTargets(function(Player)
-			Messager.sendTo({ self.Id, Message }, Player)
-		end)
-	end
-end
-function Class.OnMessage(
-	self: Class,
-	Callback: (Player: Player, Message: any) -> (),
-	Player: Player?,
-	Unreliable: boolean?
-)
-	return self.SignalMessage:Connect(function(Message, IsUnreliable, ThePlayer)
-		if not IsUnreliable ~= not Unreliable then
-			return
-		end
-		if Player and Player ~= ThePlayer then
-			return
-		end
-
-		Callback(ThePlayer, Message)
 	end)
 end
 
