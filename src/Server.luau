@@ -1,10 +1,9 @@
 --!optimize 2
 
-local Module = {}
+local Server = {}
 
 --== Services ==--
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 --== Dependencies ==--
 local Shared = require("./Shared")
@@ -13,7 +12,6 @@ local MakeProxy = require("./MakeProxy")
 
 --== Variables ==--
 local Ids = 0
-local IsInit = false
 
 local SignalKeys = {
 	"SignalChanged",
@@ -25,7 +23,7 @@ local TableKeys = {
 }
 
 local Class = {}
-function Class.__index(self: Class, Key)
+function Class.__index(self: InternalClass, Key)
 	local Existing = Class[Key]
 	if Existing then
 		return Existing
@@ -47,7 +45,7 @@ function Class.__index(self: Class, Key)
 end
 
 type PathType = Shared.PathType
-export type Class<T = {}> = Shared.ServerClass<T> & {
+export type InternalClass<T = {}> = Shared.ServerClass<T> & {
 	ReplicateMode: "All" | "None",
 
 	IncludeList: { [Player]: boolean },
@@ -62,31 +60,24 @@ export type Class<T = {}> = Shared.ServerClass<T> & {
 }
 
 local ReadyPlayers = {} :: { [Player]: boolean }
-local Objects = {} :: { [number]: Class }
-local Identifiers = {} :: { [string]: Class }
+local Objects = {} :: { [number]: InternalClass }
+local Identifiers = {} :: { [string]: InternalClass }
 
-Module.SignalPlayerAdded = Signal.new() :: Signal.Signal<Player>
-Module.SignalPlayerRemoved = Signal.new() :: Signal.Signal<Player>
+Server.SignalPlayerAdded = Signal.new() :: Signal.Signal<Player>
+Server.SignalPlayerRemoved = Signal.new() :: Signal.Signal<Player>
 
 --== Script ==--
-local function CreateForPlayer(Creation, Player: Player)
-	Shared.Packets.ObjectCreated.sendTo(Creation, Player)
-end
-local function DestroyForPlayer(Id: number, Player: Player)
-	Shared.Packets.ObjectDestroyed.sendTo(Id, Player)
-end
-
 local function OnPlayerAdded(Player: Player)
 	ReadyPlayers[Player] = true
 
 	for i, v in Objects do
 		if v.ReplicateMode == "All" then
 			local Info = v._creation
-			CreateForPlayer(Info, Player)
+			Shared.Packets.ObjectCreated.sendTo(Info, Player)
 		end
 	end
 
-	Module.SignalPlayerAdded:Fire(Player)
+	Server.SignalPlayerAdded:Fire(Player)
 end
 local function OnPlayerRemoving(Player: Player)
 	ReadyPlayers[Player] = nil
@@ -96,57 +87,71 @@ local function OnPlayerRemoving(Player: Player)
 		v.ExcludeList[Player] = nil
 	end
 
-	Module.SignalPlayerRemoved:Fire(Player)
+	Server.SignalPlayerRemoved:Fire(Player)
 end
 
-local function IterateGroup(self: Class, Func: (self: Class) -> ())
-	Func(self)
+local ProxyMethods = {
+	Insert = function(Proxy, Value, Index)
+		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
+		local Raw = MakeProxy.GetValue(Proxy)
 
-	local Children = rawget(self, "Children")
-	if Children then
-		for _, Child in Children do
-			IterateGroup(Child, Func)
+		Index = Index or #Raw + 1
+		MakeProxy.Insert(Proxy, Value, Index)
+
+		local Path = MakeProxy.TracePath(Proxy)
+		table.insert(Path, Index)
+
+		Value = type(Value) == "table" and Shared.DeepCopy(Value) or Value
+		local Info = { Object.Id, Path, Value }
+
+		Object:IterateTargets(function(Player)
+			Shared.Packets.Insert.sendTo(Info, Player)
+		end)
+
+		if Object._changetrack then
+			Object.SignalChanged:Fire(Path, Value, "Insert")
 		end
-	end
-end
+	end,
+	Remove = function(Proxy, Index)
+		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
+		local Raw = MakeProxy.GetValue(Proxy)
 
-local function Insert(self: Class, Table: any, Path: PathType, Value: any, Index: number?)
-	Index = Index or #Table + 1
-	table.insert(Table, Index, Value)
+		Index = Index or #Raw
+		MakeProxy.Remove(Proxy, Index)
 
-	table.insert(Path, Index)
-	Path = Shared.PathToString(Path)
+		local Path = MakeProxy.TracePath(Proxy)
+		table.insert(Path, Index)
 
-	Value = type(Value) == "table" and table.clone(Value) or Value
-	local Info = { self.Id, Path, Value }
+		local Info = { Object.Id, Path }
+		Object:IterateTargets(function(Player)
+			Shared.Packets.Remove.sendTo(Info, Player)
+		end)
 
-	self:IterateTargets(function(Player)
-		Shared.Packets.Insert.sendTo(Info, Player)
-	end)
+		if Object._changetrack then
+			Object.SignalChanged:Fire(Path, nil, "Remove")
+		end
+	end,
 
-	if self._changetrack then
-		self.SignalChanged:Fire(Path, Value, "Insert")
-	end
-end
-local function Remove(self: Class, Table: any, Path: PathType, Index: number?)
-	Index = Index or #Table
-	table.remove(Table, Index)
+	Get = MakeProxy.GetValue,
+	Set = function(Proxy, Value)
+		if type(Value) == "function" then
+			Value = Value(MakeProxy.GetValue(Proxy))
+		end
 
-	table.insert(Path, Index)
-	Path = Shared.PathToString(Path)
+		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
+		local Parent = MakeProxy.GetParent(Proxy)
+		local Key = MakeProxy.GetKey(Proxy)
 
-	local Info = { self.Id, Path }
+		local Path = MakeProxy.TracePath(Parent)
+		table.insert(Path, Key)
+		Object:PathSet(Path, Value, MakeProxy.GetValue(Parent))
 
-	self:IterateTargets(function(Player)
-		Shared.Packets.Remove.sendTo(Info, Player)
-	end)
+		return Value
+	end,
+}
 
-	if self._changetrack then
-		self.SignalChanged:Fire(Path, nil, "Remove")
-	end
-end
-
-local function Init()
+local IsInit = false
+function Server.Init()
 	if IsInit then
 		return
 	end
@@ -168,30 +173,14 @@ local function Init()
 		OnPlayerRemoving(Player)
 	end)
 end
-if RunService:IsServer() then
-	Init()
-end
-
-local ProxyMethods = {
-	Insert = function(Proxy, Value, Index)
-		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
-		local Path = MakeProxy.TracePath(Proxy)
-		return Insert(Object, MakeProxy.GetValue(Proxy), Path, Value, Index)
-	end,
-	Remove = function(Proxy, Index)
-		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
-		local Path = MakeProxy.TracePath(Proxy)
-		return Remove(Object, MakeProxy.GetValue(Proxy), Path, Index)
-	end,
-}
 
 --== Class ==--
-function Module.Register<T>(Props: {
+function Server.Register<T>(Props: {
 	Data: T,
 	Identifier: string?,
 	Tags: { string }?,
 	[string]: any,
-}): Class<T>
+}): Shared.ServerClass<T>
 	local Identifier = Props.Identifier
 	local Data = Props.Data
 	local Tags = Props.Tags
@@ -201,19 +190,18 @@ function Module.Register<T>(Props: {
 
 	Ids += 1
 
-	local NewObject = setmetatable({}, Class) :: Class
+	local NewObject = setmetatable({}, Class) :: InternalClass
 	NewObject.Id = Ids
 	NewObject.Identifier = Props.Identifier
-	NewObject.Data = Data
 	NewObject.Tags = Tags or {}
 
+	NewObject.Active = true
+	NewObject.ReplicateMode = "None"
+
+	NewObject._raw = Data
+	NewObject._creation = { NewObject.Id, NewObject._raw, NewObject.Tags, NewObject.Identifier }
+
 	NewObject.Data = MakeProxy.new(Data, {
-		SetCallback = function(Parent, Key, Value)
-			local Path = MakeProxy.TracePath(Parent)
-			table.insert(Path, Key)
-			NewObject:Set(Path, Value, MakeProxy.GetValue(Parent))
-		end,
-		IndexMethods = ProxyMethods,
 		CallFunction = function(Proxy, ...)
 			if select("#", ...) > 0 then
 				local Value = ...
@@ -224,22 +212,18 @@ function Module.Register<T>(Props: {
 				local Parent = MakeProxy.GetParent(Proxy)
 				local Key = MakeProxy.GetKey(Proxy)
 
-				Parent[Key] = Value
+				local Path = MakeProxy.TracePath(Parent)
+				table.insert(Path, Key)
+				NewObject:PathSet(Path, Value, MakeProxy.GetValue(Parent))
 
-				return nil
+				return Value
 			else
 				return MakeProxy.GetValue(Proxy)
 			end
 		end,
 		Identifier = NewObject.Id,
-		IsServer = true,
+		IndexMethods = ProxyMethods,
 	})
-
-	NewObject.Active = true
-	NewObject.ReplicateMode = "None"
-
-	NewObject._raw = NewObject.Data()
-	NewObject._creation = { NewObject.Id, NewObject._raw, NewObject.Tags, NewObject.Identifier }
 
 	Objects[Ids] = NewObject
 	if Identifier then
@@ -249,26 +233,41 @@ function Module.Register<T>(Props: {
 	return NewObject
 end
 
-function Module.Get<T>(Identifier: string, Template: T?): Class<T>?
+function Server.Get<T>(Identifier: string, Template: T?): Shared.ServerClass<T>?
 	return Identifiers[Identifier]
 end
 
-function Module.WaitForReadyPlayer(Player: Player): boolean?
-	while not ReadyPlayers[Player] and Player.Parent do
-		task.wait()
+function Server.WaitForReadyPlayer(Player: Player): boolean?
+	if ReadyPlayers[Player] then
+		return Player
 	end
-	return ReadyPlayers[Player]
-end
-function Module.Is(Object: any): Class | false
-	return type(Object) == "table" and getmetatable(Object) == Class and Object
+	
+	local Left: boolean?
+	
+	local Disconnect: Signal.Connection
+	Disconnect = Server.SignalPlayerRemoved:Connect(function(RemovedPlayer)
+		if RemovedPlayer ~= Player then
+			return
+		end
+		
+		Left = true
+		Disconnect()
+	end)
+	
+	local AddedPlayer
+	repeat
+		AddedPlayer = Server.SignalPlayerAdded:Wait()
+	until Left or AddedPlayer == Player
+	Disconnect()
+	
+	return if Left then false else true
 end
 
-function Class.Set(self: Class, Path: PathType, Value: any, tbl: any)
-	local Pointer = tbl or self:Get(Path, 1)
+function Class.PathSet(self: InternalClass, Path: PathType, Value: any, tbl: any)
+	local Pointer = tbl or self:PathGet(Path, 1)
 	Pointer[Path[#Path]] = Value
 
-	Path = Shared.PathToString(Path)
-	Value = type(Value) == "table" and table.clone(Value) or Value -- Ensuring Value is immutable.
+	Value = type(Value) == "table" and Shared.DeepCopy(Value) or Value -- Ensuring Value is immutable.
 	local Info = { self.Id, Path, Value }
 
 	self:IterateTargets(function(Player)
@@ -279,7 +278,7 @@ function Class.Set(self: Class, Path: PathType, Value: any, tbl: any)
 		self.SignalChanged:Fire(Path, Value, "Set")
 	end
 end
-function Class.Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
+function Class.PathGet(self: InternalClass, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
 	local Data = if notraw then self.Data else self._raw
 	for i = 1, #Path - (IgnoreLast or 0) do
 		Data = Data[Path[i]]
@@ -288,7 +287,7 @@ function Class.Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boo
 end
 
 --== Utility ==--
-function Class.IterateTargets(self: Class, Callback: (Player: Player) -> ())
+function Class.IterateTargets(self: InternalClass, Callback: (Player: Player) -> ())
 	if self.ReplicateMode == "All" then
 		for i, v in ReadyPlayers do
 			if self.ExcludeList[i] then
@@ -303,89 +302,25 @@ function Class.IterateTargets(self: Class, Callback: (Player: Player) -> ())
 		end
 	end
 end
-function Class.IsTarget(self: Class, Player: Player): boolean?
+function Class.IsTarget(self: InternalClass, Player: Player): boolean?
 	return ReadyPlayers[Player]
 		and if self.ReplicateMode == "All" then not self.ExcludeList[Player] else self.IncludeList[Player]
 end
 
---== Hierarchy ==--
-function Class.SetParent(self: Class, Parent: Class?, ChildIndex: any?)
-	if not Parent and not ChildIndex and self.Parent then
-		for i, v in self.Parent.Children do
-			if v == self then
-				self.Parent.Children[i] = nil
-			end
-		end
-
-		self.Parent = nil
-		self.IncludeList = {}
-		self.ExcludeList = {}
-		self.ReplicateMode = "None"
-
-		return
-	elseif not Parent and ChildIndex then
-		error(`Parent is nil.`)
-	end
-
-	assert(self.Parent == nil, `Child is already parented`)
-	assert(Parent.Children[ChildIndex] == nil, `Child with name '{ChildIndex}' already exists`)
-
-	local RecursiveCheck = Parent
-	while RecursiveCheck do
-		RecursiveCheck = RecursiveCheck.Parent
-		assert(RecursiveCheck ~= self, `Child is parented to a descendant`)
-	end
-
-	Parent.Children[ChildIndex] = self
-	self.Parent = Parent
-
-	self:IterateTargets(function(Player)
-		if not Parent:IsTarget(Player) then
-			DestroyForPlayer(self.Id, Player)
-		end
-	end)
-
-	IterateGroup(self, function(Object)
-		Object.IncludeList = Parent.IncludeList
-		Object.ExcludeList = Parent.ExcludeList
-		Object.ReplicateMode = Parent.ReplicateMode
-	end)
+--== Replication ==--
+function Class.Replicate(self: InternalClass)
+	self.ReplicateMode = "All"
+	self.IncludeList = nil
+	self.ExcludeList = nil
 
 	local Info = self._creation
 	self:IterateTargets(function(Player)
-		CreateForPlayer(Info, Player)
+		Shared.Packets.ObjectCreated.sendTo(Info, Player)
 	end)
 
 	return self
 end
-
---== Replication ==--
-function Class.Replicate(self: Class)
-	if self.Parent then
-		warn(`Cannot change replication properties of a child object`)
-		return
-	end
-
-	self.ReplicateMode = "All"
-	table.clear(self.IncludeList)
-	table.clear(self.ExcludeList)
-
-	IterateGroup(self, function(Object)
-		Object.ReplicateMode = self.ReplicateMode
-
-		local Info = self._creation
-		Object:IterateTargets(function(Player)
-			CreateForPlayer(Info, Player)
-		end)
-	end)
-
-	return self
-end
-function Class.Subscribe(self: Class, Player: Player)
-	if self.Parent then
-		warn(`Cannot change replication properties of a child object`)
-		return
-	end
+function Class.Subscribe(self: InternalClass, Player: Player)
 	if Player and not ReadyPlayers[Player] then
 		warn(`Player {Player} is not ready`)
 		return
@@ -399,41 +334,26 @@ function Class.Subscribe(self: Class, Player: Player)
 	end
 	self.ExcludeList[Player] = nil
 
-	IterateGroup(self, function(Object)
-		local Info = self._creation
-		CreateForPlayer(Info, Player)
+	local Info = self._creation
+	self:IterateTargets(function(Player)
+		Shared.Packets.ObjectCreated.sendTo(Info, Player)
 	end)
 
 	return self
 end
-function Class.Unreplicate(self: Class)
-	if self.Parent then
-		warn(`Cannot change replication properties of a child object`)
-		return
-	end
-
-	IterateGroup(self, function(Object)
-		local Info = Object.Id
-		Object:IterateTargets(function(Player)
-			DestroyForPlayer(Info, Player)
-		end)
-
-		if Object == self then
-			self.ReplicateMode = "None"
-			table.clear(self.IncludeList)
-			table.clear(self.ExcludeList)
-
-			return
-		end
-
-		Object.ReplicateMode = self.ReplicateMode
+function Class.Unreplicate(self: InternalClass)
+	local Info = self.Id
+	self:IterateTargets(function(Player)
+		Shared.Packets.ObjectDestroyed.sendTo(Info, Player)
 	end)
+
+	self.ReplicateMode = "None"
+	self.IncludeList = nil
+	self.ExcludeList = nil
+
+	return self
 end
-function Class.Unsubscribe(self: Class, Player: Player)
-	if self.Parent then
-		warn(`Cannot change replication properties of a child object`)
-		return
-	end
+function Class.Unsubscribe(self: InternalClass, Player: Player)
 	if Player and not ReadyPlayers[Player] then
 		warn(`Player {Player} is not ready`)
 		return
@@ -447,34 +367,31 @@ function Class.Unsubscribe(self: Class, Player: Player)
 		self.ExcludeList[Player] = true
 	end
 
-	IterateGroup(self, function(Object)
-		local Info = Object.Id
-		DestroyForPlayer(Info, Player)
-	end)
+	local Info = self.Id
+	Shared.Packets.ObjectDestroyed.sendTo(Info, Player)
+
+	return self
 end
 
 --== Destruction ==--
-function Class.Destroy(self: Class)
-	IterateGroup(self, function(self)
-		self.Active = nil
+function Class.Destroy(self: InternalClass)
+	self.Active = nil
+	self:Unreplicate()
 
-		self:Unreplicate()
-
-		for i, v in SignalKeys do
-			local destroySignal = rawget(self, v)
-			if destroySignal then
-				destroySignal:Destroy()
-			end
+	for i, v in SignalKeys do
+		local destroySignal = rawget(self, v)
+		if destroySignal then
+			destroySignal:Destroy()
 		end
+	end
 
-		Objects[self.Id] = nil
-		if self.Identifier then
-			Identifiers[self.Identifier] = nil
-		end
+	Objects[self.Id] = nil
+	if self.Identifier then
+		Identifiers[self.Identifier] = nil
+	end
 
-		table.clear(self)
-		setmetatable(self, nil)
-	end)
+	table.clear(self)
+	setmetatable(self, nil)
 end
 
-return Module
+return Server

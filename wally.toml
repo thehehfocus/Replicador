@@ -1,11 +1,11 @@
 [package]
 name = "thehehfocus/replicador"
-description = "Simple library for replication structure."
+description = "Simple library for structure replication."
 
 authors = ["thehehfocus"]
 
 license = "MIT"
-version = "0.1.28"
+version = "0.1.35"
 registry = "https://github.com/UpliftGames/wally-index"
 
 realm = "shared"

@@ -1,5 +1,9 @@
 --!optimize 2
+--!strict
+
 local Module = {}
+
+local IsServer = game:GetService("RunService"):IsServer()
 
 local ORIG_KEY = -1
 local PARAMS_KEY = -2
@@ -9,19 +13,13 @@ local CHILDREN_KEY = -5
 local CALLBACKS_KEY = -6
 
 type Params = {
-	SetCallback: (Proxy: {}, Key: any, Value: any) -> ()?,
 	CallFunction: (Proxy: {}, ...any) -> ()?,
-	IndexMethods: {}?,
+	IndexMethods: { [any]: any }?,
 	Identifier: any,
-	IsServer: boolean?,
-	TempDisableSetCallback: number,
 }
+type Proxy = { [any]: any }
 
-Module._ntvst = false
-
-local MT = {}
-
-local function IterateProxy(Proxy: any, Function: (any) -> ())
+local function IterateProxy(Proxy: Proxy, Function: (any) -> ())
 	Function(Proxy)
 
 	local Children = rawget(Proxy, CHILDREN_KEY)
@@ -32,8 +30,7 @@ local function IterateProxy(Proxy: any, Function: (any) -> ())
 	end
 end
 local function FireProxyCallbacks(Proxy: any, Action: string, ...)
-	local Params: Params = rawget(Proxy, PARAMS_KEY)
-	if Params.IsServer then
+	if IsServer then
 		return
 	end
 
@@ -45,102 +42,87 @@ local function FireProxyCallbacks(Proxy: any, Action: string, ...)
 	end
 end
 
-local function Set(Proxy, Key, Value)
-	local Params: Params = rawget(Proxy, PARAMS_KEY)
-	local Callback = Params.SetCallback
+local MT = {}
 
-	local Children = rawget(Proxy, CHILDREN_KEY)
+local function Set(Proxy: Proxy, Key: any, Value: any)
+	local Params = rawget(Proxy, PARAMS_KEY) :: Params
+	local Children = rawget(Proxy, CHILDREN_KEY) :: any
 
 	-- Assign the value to the actual table
-	local OriginalValue = rawget(Proxy, ORIG_KEY)
+	local OriginalValue = rawget(Proxy, ORIG_KEY) :: any
+	local OldValue = nil
 	if OriginalValue then
+		OldValue = OriginalValue[Key]
 		OriginalValue[Key] = Value
-	else
-		error("Attempt to index a nil proxy value.")
 	end
 
 	local Child = Children and Children[Key]
-
 	if Child then
 		rawset(Child, ORIG_KEY, Value)
-		local ChildChildren = rawget(Child, CHILDREN_KEY)
 
+		local ChildChildren = rawget(Child, CHILDREN_KEY)
 		if ChildChildren then
 			for i, v in ChildChildren do
-				Set(Child, i, Value and Value[i])
+				Set(Child, i, Value and Value[i] or nil)
 			end
 		end
 
-		if not Params.IsServer then
-			IterateProxy(Child, function(Proxy)
-				FireProxyCallbacks(Proxy, "Set")
-			end)
-			FireProxyCallbacks(Proxy, "DescendantChange", Key, Value)
-		end
-	elseif not Params.IsServer or type(Value) == "table" or Module._ntvst then
-		-- Make value a proxy.
-		local new = Module.new(Value, Params, true)
-		new[PARENT_KEY] = Proxy
-		new[INDEX_KEY] = Key
-		setmetatable(new, MT)
+		IterateProxy(Child, function(Proxy)
+			FireProxyCallbacks(Proxy, "Set")
+		end)
+		FireProxyCallbacks(Proxy, "DescendantChange", Key, Value, OldValue)
 
-		if not Children then
-			Children = {}
-			rawset(Proxy, CHILDREN_KEY, Children)
-		end
-		Children[Key] = new
-
-		if not Params.IsServer then
-			FireProxyCallbacks(new, "Set")
-			FireProxyCallbacks(Proxy, "DescendantChange", Key, Value)
-		end
+		return
 	end
 
-	if Callback and Params.TempDisableSetCallback < 1 then
-		Callback(Proxy, Key, Value)
+	-- Make value a proxy.
+	local new = Module.new(Value, Params, true)
+	new[PARENT_KEY] = Proxy
+	new[INDEX_KEY] = Key
+	setmetatable(new, MT)
+
+	if not Children then
+		Children = {}
+		rawset(Proxy, CHILDREN_KEY, Children)
 	end
+	Children[Key] = new
+	
+	FireProxyCallbacks(new, "Set")
+	FireProxyCallbacks(Proxy, "DescendantChange", Key, Value, OldValue)
 end
 
 function MT.__index(Proxy, Key)
-	local Children = rawget(Proxy, CHILDREN_KEY)
+	local Children = rawget(Proxy, CHILDREN_KEY) :: any
 	local Child = Children and Children[Key]
 	if Child then
 		return Child
 	end
 
-	local Params: Params = rawget(Proxy, PARAMS_KEY)
+	local Params = rawget(Proxy, PARAMS_KEY) :: Params
 	local IndexMethods = Params.IndexMethods
 	local Method = IndexMethods and IndexMethods[Key]
 	if Method ~= nil then
 		return Method
 	end
 
-	local OriginalValue = rawget(Proxy, ORIG_KEY)
-	local OrigAtKey = type(OriginalValue) == "table" and OriginalValue[Key] or nil
+	local OriginalValue = rawget(Proxy, ORIG_KEY) :: any
 
-	if not Params.IsServer or type(OrigAtKey) == "table" or Module._ntvst then
-		Params.TempDisableSetCallback += 1
-		Set(Proxy, Key, OrigAtKey)
-		Params.TempDisableSetCallback -= 1
+	local OrigAtKey = OriginalValue and OriginalValue[Key] or nil
+	Set(Proxy, Key, OrigAtKey)
 
-		return rawget(Proxy, CHILDREN_KEY)[Key]
-	end
-
-	return OrigAtKey
+	local NewChildren = rawget(Proxy, CHILDREN_KEY) :: any
+	return NewChildren[Key]
 end
 function MT.__newindex(Proxy, Key, Value)
 	Set(Proxy, Key, Value)
 end
 function MT.__call(Proxy, ...)
-	local Params: Params = rawget(Proxy, PARAMS_KEY)
-	return Params.CallFunction(Proxy, ...)
-end
-function MT.__len(Proxy)
-	return #Module.GetValue(Proxy)
+	local Params = rawget(Proxy, PARAMS_KEY) :: Params
+	local Cf = Params.CallFunction
+	return if Cf then Cf(Proxy, ...) else nil
 end
 
 function Module.new<T>(OriginalValue: T, Params: Params, InternalCall: boolean?): T
-	Params.TempDisableSetCallback = Params.TempDisableSetCallback or 0
 	local Proxy = {
 		[PARAMS_KEY] = Params,
 		[ORIG_KEY] = OriginalValue,
@@ -153,7 +135,7 @@ function Module.new<T>(OriginalValue: T, Params: Params, InternalCall: boolean?)
 	return Proxy
 end
 
-function Module.TracePath(Proxy)
+function Module.TracePath(Proxy): { string | number }
 	local Path = {}
 
 	local Pointer = Proxy
@@ -162,14 +144,14 @@ function Module.TracePath(Proxy)
 		if not Parent then
 			break
 		end
-		table.insert(Path, 1, rawget(Pointer, INDEX_KEY))
+		table.insert(Path, 1, rawget(Pointer, INDEX_KEY) :: any)
 		Pointer = Parent
 	end
 	return Path
 end
 
-function Module.Connect(Proxy, Callback: (Action: string, ...any) -> ())
-	local Callbacks = rawget(Proxy, CALLBACKS_KEY)
+function Module.Connect(Proxy, Callback: (Action: string, ...any) -> ()): (Disconnect: nil) -> ()
+	local Callbacks: any = rawget(Proxy, CALLBACKS_KEY)
 	if not Callbacks then
 		Callbacks = {}
 		rawset(Proxy, CALLBACKS_KEY, Callbacks)
@@ -183,55 +165,41 @@ function Module.Connect(Proxy, Callback: (Action: string, ...any) -> ())
 	end
 end
 
-function Module.IsProxy(Proxy)
-	return type(Proxy) == "table" and rawget(Proxy, PARAMS_KEY)
+function Module.GetParams(Proxy): Params?
+	return type(Proxy) == "table" and rawget(Proxy, PARAMS_KEY) :: Params or nil
 end
-
-function Module.GetValue(Proxy): {}
-	return Module.IsProxy(Proxy) and rawget(Proxy, ORIG_KEY)
-end
--- function Module.SetValue(Proxy, Value)
--- 	local Parent = rawget(Proxy, PARENT_KEY)
--- 	if Parent then
--- 		local Orig = Parent[ORIG_KEY]
--- 		Orig[rawget(Proxy, INDEX_KEY)] = Value
--- 	end
-
--- 	rawset(Proxy, ORIG_KEY, Value)
--- end
--- function Module.GetParent(Proxy)
--- return rawget(Proxy, PARENT_KEY)
--- end
-function Module.GetIdentifier(Proxy)
-	local Params: Params = Module.IsProxy(Proxy)
+function Module.GetIdentifier(Proxy): any
+	local Params = Module.GetParams(Proxy)
 	return Params and Params.Identifier
 end
--- function Module.GetKey(Proxy)
--- 	return rawget(Proxy, INDEX_KEY)
--- end
--- function Module.ToggleSetCallback(Proxy, Increment: boolean?)
--- 	local Params: Params = Module.IsProxy(Proxy)
--- 	Params.TempDisableSetCallback += Increment and 1 or -1
--- end
+function Module.GetParent(Proxy: Proxy)
+	return rawget(Proxy, PARENT_KEY) :: Proxy
+end
+function Module.GetKey(Proxy: Proxy)
+	return rawget(Proxy, INDEX_KEY) :: any
+end
+function Module.GetValue(Proxy: Proxy)
+	return rawget(Proxy, ORIG_KEY) :: any
+end
 
-function Module.Insert(Proxy, Value, Index)
-	local len = #Proxy
+function Module.Insert(Proxy: Proxy, Value: any, Index: number)
+	local len = #rawget(Proxy, ORIG_KEY)
 
 	for i = len, Index, -1 do
 		local Next = Proxy[i]
-		Proxy[i + 1] = Module.GetValue(Next) or Next
+		Proxy[i + 1] = rawget(Next, ORIG_KEY)
 	end
 	Proxy[Index] = Value
 
 	FireProxyCallbacks(Proxy, "Insert", Value, Index)
 end
-function Module.Remove(Proxy, Index)
+function Module.Remove(Proxy: Proxy, Index: number): any
 	local Value = Proxy[Index]
-	local len = #Proxy
+	local len = #rawget(Proxy, ORIG_KEY)
 
 	for i = Index, len - 1 do
 		local Next = Proxy[i + 1]
-		Proxy[i] = Module.GetValue(Next) or Next
+		Proxy[i] = rawget(Next, ORIG_KEY)
 	end
 	Proxy[len] = nil
 

@@ -1,7 +1,5 @@
 --!optimize 2
-local RunService = game:GetService("RunService")
-
-local Module = {}
+local Client = {}
 
 --== Dependencies ==--
 local Shared = require("./Shared")
@@ -9,21 +7,20 @@ local Signal = require("./Signal")
 local MakeProxy = require("./MakeProxy")
 
 --== Variables ==--
-local IsInit = false
 local SignalKeys = {
 	"SignalChanged",
 	"SignalDestroyed",
 }
 
-local Objects = {} :: { [number]: Class }
-local Tagged = {} :: { [string]: { Class } }
+local Objects = {} :: { [number]: InternalClass }
+local Tagged = {} :: { [string]: { InternalClass } }
 local Identifiers = {} :: { [string]: Object }
 
-local ObjectAdded = Signal.new() :: Signal.Signal<Class>
-local ObjectRemoved = Signal.new() :: Signal.Signal<Class>
+local ObjectAdded = Signal.new() :: Signal.Signal<InternalClass>
+local ObjectRemoved = Signal.new() :: Signal.Signal<InternalClass>
 
 local Class = {}
-function Class.__index(self: Class, Key)
+function Class.__index(self: InternalClass, Key)
 	local Existing = Class[Key]
 	if Existing then
 		return Existing
@@ -42,7 +39,7 @@ function Class.__index(self: Class, Key)
 end
 
 type PathType = Shared.PathType
-export type Class<T = {}> = Shared.ClientClass<T> & {
+export type InternalClass<T = {}> = Shared.ClientClass<T> & {
 	_raw: {},
 	_changetrack: boolean?,
 }
@@ -50,13 +47,13 @@ export type Class<T = {}> = Shared.ClientClass<T> & {
 type Disconnect = (Disconnect: nil) -> ()
 local ProxyMethods = {
 	OnChange = function(Proxy, Callback: (Value: any, OldValue: any) -> ()): Disconnect
-		local OldValue = Proxy()
+		local OldValue = MakeProxy.GetValue(Proxy)
 		return MakeProxy.Connect(Proxy, function(Action)
 			if Action ~= "Set" then
 				return
 			end
 
-			local NewValue = Proxy()
+			local NewValue = MakeProxy.GetValue(Proxy)
 			if NewValue ~= OldValue then
 				Callback(NewValue, OldValue)
 				OldValue = NewValue
@@ -81,24 +78,40 @@ local ProxyMethods = {
 			Callback(RemovedValue, Index)
 		end)
 	end,
-	OnKeySet = function(Proxy, Callback: (Key: any, Value: any) -> ()): Disconnect
-		return MakeProxy.Connect(Proxy, function(Action, Key, Value)
+	OnKeyChange = function(Proxy, Callback: (Key: any, Value: any) -> ()): Disconnect
+		return MakeProxy.Connect(Proxy, function(Action, Key, Value, OldValue)
 			if Action ~= "DescendantChange" then
 				return
 			end
+			
+			if Value == OldValue then
+				return
+			end
 
-			Callback(Key, Value)
+			Callback(Key, Value, OldValue)
 		end)
+	end,
+
+	Get = MakeProxy.GetValue,
+	Set = function(Proxy, Value)
+		if type(Value) == "function" then
+			Value = Value(MakeProxy.GetValue(Proxy))
+		end
+
+		local Parent = MakeProxy.GetParent(Proxy)
+		local Key = MakeProxy.GetKey(Proxy)
+
+		Parent[Key] = Value
+
+		return nil
 	end,
 }
 
 --== Script ==--
 local function Register(Id: number, Data: any, Tags: { string }, Identifier: string?)
-	local Object = setmetatable({}, Class) :: Class
+	local Object = setmetatable({}, Class) :: InternalClass
 	Object.Id = Id
 	Object.Data = MakeProxy.new(Data, {
-		IndexMethods = ProxyMethods,
-		Identifier = Id,
 		CallFunction = function(Proxy, ...)
 			if select("#", ...) > 0 then
 				local Value = ...
@@ -116,6 +129,8 @@ local function Register(Id: number, Data: any, Tags: { string }, Identifier: str
 				return MakeProxy.GetValue(Proxy)
 			end
 		end,
+		IndexMethods = ProxyMethods,
+		Identifier = Id,
 	})
 	Object.Tags = Tags
 	Object.Identifier = Identifier
@@ -139,8 +154,7 @@ local function Register(Id: number, Data: any, Tags: { string }, Identifier: str
 
 	return Object
 end
-
-local function Destroy(Object: Class)
+local function Destroy(Object: InternalClass)
 	Object.Active = false
 
 	local SignalDestroyed = rawget(Object, "SignalDestroyed")
@@ -172,7 +186,8 @@ local function Destroy(Object: Class)
 	end
 end
 
-local function Init()
+local IsInit = false
+function Client.Init()
 	if IsInit then
 		return
 	end
@@ -211,9 +226,7 @@ local function Init()
 			return
 		end
 
-		Path = Shared.PathToNormal(Path)
-		local Pointer = Object:Get(Path, 1, true)
-
+		local Pointer = Object:PathGet(Path, 1, true)
 		Pointer[Path[#Path]] = Value
 
 		if Object._changetrack then
@@ -231,10 +244,9 @@ local function Init()
 			return
 		end
 
-		Path = Shared.PathToNormal(Path)
-
 		local Index = Path[#Path]
-		local Pointer = Object:Get(Path, 1, true)
+		local Pointer = Object:PathGet(Path, 1, true)
+
 		MakeProxy.Insert(Pointer, Value, Index)
 
 		if Object._changetrack then
@@ -250,10 +262,8 @@ local function Init()
 			return
 		end
 
-		Path = Shared.PathToNormal(Path)
-
 		local Index = Path[#Path]
-		local Pointer = Object:Get(Path, 1, true)
+		local Pointer = Object:PathGet(Path, 1, true)
 		MakeProxy.Remove(Pointer, Index)
 
 		if Object._changetrack then
@@ -264,20 +274,17 @@ local function Init()
 	task.wait()
 	Shared.Packets.RequestData.send()
 end
-if RunService:IsClient() then
-	Init()
-end
 
-function Module.Get<T>(Identifier: string, DataTemplate: T?): Class<T>?
+function Client.Get<T>(Identifier: string, DataTemplate: T?): Shared.ClientClass<T>?
 	return Identifiers[Identifier]
 end
-Module.GetTagged = function(Tag: string | { string }, Id: number?): Class | { Class }?
+Client.GetTagged = function(Tag: string | { string }, Id: number?): Shared.ClientClass | { Shared.ClientClass }?
 	if type(Tag) == "string" then
 		return if type(Id) == "number" then Tagged[Tag] and Tagged[Tag][Id] else Tagged[Tag] or {}
 	else
 		local Result = {}
 		for i, v in Tag do
-			local Objects = Module.GetTagged(v, Id)
+			local Objects = Client.GetTagged(v, Id)
 			if not Objects then
 				continue
 			end
@@ -292,10 +299,10 @@ Module.GetTagged = function(Tag: string | { string }, Id: number?): Class | { Cl
 		end
 		return Result
 	end
-end :: ((Tag: string) -> { Class }) & ((Tags: { string }) -> { Class }) & ((Tag: string, Id: number) -> Class?)
+end :: ((Tag: string) -> { Shared.ClientClass }) & ((Tags: { string }) -> { Shared.ClientClass }) & ((Tag: string, Id: number) -> Shared.ClientClass?)
 
 local function IdentifierImpl(Identifier: string, Callback)
-	return function(Class: Class)
+	return function(Class: InternalClass)
 		if Class.Identifier == Identifier then
 			if Callback then
 				Callback(Class)
@@ -305,22 +312,26 @@ local function IdentifierImpl(Identifier: string, Callback)
 		return false
 	end
 end
-function Module.OnNew(Identifier: string, Callback: (New: Class) -> (), CallOnExisting: boolean?): Signal.Connection
-	local Existing = Module.Get(Identifier)
+function Client.OnNew(
+	Identifier: string,
+	Callback: (New: Shared.ClientClass) -> (),
+	CallOnExisting: boolean?
+): Signal.Connection
+	local Existing = Client.Get(Identifier)
 	if CallOnExisting and Existing then
 		Callback(Existing)
 	end
 
 	return ObjectAdded:Connect(IdentifierImpl(Identifier, Callback))
 end
-function Module.OnRemoved(Identifier: string, Callback: (Removed: Class) -> ()): Signal.Connection
+function Client.OnRemoved(Identifier: string, Callback: (Removed: Shared.ClientClass) -> ()): Signal.Connection
 	return ObjectRemoved:Connect(IdentifierImpl(Identifier, Callback))
 end
 
 local function TaggedImpl(Tags: string | { string }, Callback)
 	if type(Tags) == "string" then
 		return function(Class)
-			if not Module.GetTagged(Tags, Class.Id) then
+			if not Client.GetTagged(Tags, Class.Id) then
 				return false
 			end
 
@@ -333,7 +344,7 @@ local function TaggedImpl(Tags: string | { string }, Callback)
 		return function(Class)
 			local Has = true
 			for i, v in Tags do
-				Has = Module.GetTagged(v, Class.Id)
+				Has = Client.GetTagged(v, Class.Id)
 				if not Has then
 					return false
 				end
@@ -346,37 +357,40 @@ local function TaggedImpl(Tags: string | { string }, Callback)
 		end
 	end
 end
-function Module.OnNewTagged(
+function Client.OnNewTagged(
 	Tags: string | { string },
-	Callback: (New: Class) -> (),
+	Callback: (New: InternalClass) -> (),
 	CallOnExisting: boolean?
 ): Signal.Connection
 	local Handler = TaggedImpl(Tags, Callback)
 
 	if CallOnExisting then
-		for i, v in Module.GetTagged(Tags) do
+		for i, v in Client.GetTagged(Tags) do
 			Handler(v)
 		end
 	end
 
 	return ObjectAdded:Connect(Handler)
 end
-function Module.OnRemovedTagged(Tags: string | { string }, Callback: (Removed: Class) -> ()): Signal.Connection
+function Client.OnRemovedTagged(
+	Tags: string | { string },
+	Callback: (Removed: Shared.ClientClass) -> ()
+): Signal.Connection
 	local Handler = TaggedImpl(Tags, Callback)
 
 	return ObjectRemoved:Connect(Handler)
 end
 
-function Module.AwaitFor<T>(Identifier: string, DataTemplate: T?): Shared.ClientClass<T>
-	local Already = Module.Get(Identifier)
+function Client.AwaitFor<T>(Identifier: string, DataTemplate: T?): Shared.ClientClass<T>
+	local Already = Client.Get(Identifier)
 	if Already then
 		return Already
 	end
 
 	return ObjectAdded:Wait(IdentifierImpl(Identifier))
 end
-function Module.AwaitForTagged<T>(Tags: string | { string }, DataTemplate: T?): Class<T>
-	local Already = Module.GetTagged(Tags)
+function Client.AwaitForTagged<T>(Tags: string | { string }, DataTemplate: T?): Shared.ClientClass<T>
+	local Already = Client.GetTagged(Tags)
 
 	local _, _nextAlready = next(Already)
 	if _nextAlready then
@@ -386,11 +400,11 @@ function Module.AwaitForTagged<T>(Tags: string | { string }, DataTemplate: T?): 
 	return ObjectAdded:Wait(Tags, TaggedImpl(Tags))
 end
 
-function Class.Set(self: Class, Path: { PathType }, Value: any)
-	local Data = self:Get(Path, nil, true)
+function Class.PathSet(self: InternalClass, Path: { PathType }, Value: any)
+	local Data = self:PathGet(Path, nil, true)
 	Data[Path[#Path]] = Value
 end
-function Class.Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
+function Class.PathGet(self: InternalClass, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
 	local Data = if notraw then self.Data else self._raw
 	for i = 1, #Path - (IgnoreLast or 0) do
 		Data = Data[Path[i]]
@@ -398,4 +412,4 @@ function Class.Get(self: Class, Path: PathType, IgnoreLast: number?, notraw: boo
 	return Data
 end
 
-return Module
+return Client
