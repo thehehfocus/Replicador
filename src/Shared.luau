@@ -1,4 +1,3 @@
---!strict
 local Shared = {}
 
 -- Wrapper for remotes.
@@ -17,7 +16,6 @@ local Namespace = {
 		Remove = RemoteWrapper.RegisterEvent("Remove"),
 	}
 }
-
 --[[
 local Packages = game:GetService("ReplicatedStorage"):WaitForChild("Packages")
 local BytenetMax = require(Packages.ByteNetMax)
@@ -31,8 +29,7 @@ if BytenetMax then
 					value = BytenetMax.struct{
 						[1] = _IdType,
 						[2] = BytenetMax.unknown,
-						[3] = BytenetMax.array(BytenetMax.unknown),
-						[4] = BytenetMax.optional(BytenetMax.string),
+						[3] = BytenetMax.optional(BytenetMax.string),
 					}
 				}),
 				ObjectDestroyed = BytenetMax.definePacket({
@@ -71,9 +68,20 @@ end
 
 Shared.Packets = Namespace.packets
 
-function Shared.DeepCopy<T>(Original: T, MTSave: boolean?, Visited: {[{}]: {}}?) : T
+local NoDeepCopyTag = -283 -- random number
+Shared.NoDeepCopyTag = NoDeepCopyTag
+function Shared.DeepCopy<T>(Original: T, MTSave: boolean?, CreateForOppositeRunContext: boolean?, Visited: {[{}]: {}}?) : T
 	if type(Original) ~= "table" then
 		return Original
+	end
+	
+	local mt = getmetatable(Original) :: any
+	mt = type(mt) == "table" and mt
+	
+	if mt then
+		if mt[NoDeepCopyTag] then
+			return Original
+		end 
 	end
 
 	Visited = Visited or {}
@@ -84,19 +92,17 @@ function Shared.DeepCopy<T>(Original: T, MTSave: boolean?, Visited: {[{}]: {}}?)
 	local Copy = {}
 	Visited[Original] = Copy
 
-	if MTSave then
-		local mt = getmetatable(Original)
-		if type(mt) == "table" then
-			setmetatable(Copy, mt)
-		end
+	if MTSave and mt then
+		setmetatable(Copy, mt)
 	end
 
 	for Key, Value in Original :: any do
-		(Copy::any)[Shared.DeepCopy(Key, MTSave, Visited)] = Shared.DeepCopy(Value, MTSave, Visited)
+		(Copy::any)[Shared.DeepCopy(Key, MTSave, CreateForOppositeRunContext, Visited)] = Shared.DeepCopy(Value, MTSave, CreateForOppositeRunContext, Visited)
 	end
 
 	return Copy
 end
+
 
 export type PathType = {any}
 export type Action = "Set"|"Insert"|"Remove"
@@ -151,15 +157,18 @@ type ValueMethodsClient<Data> = {
 }
 
 export type function ComputeType(Type: type, IsServer: type)
-	local IsTable = Type:is("table") 
 	local IsServerValue = IsServer:value()
-	
 	local New = types.newtable()
 	local MetatableType = nil
+	local IsTable = Type:is("table") 
 
 	if IsTable then
 		for i,v in Type:properties() do
-			New:setproperty(i, ComputeType(v.read, IsServer))
+			local Computed = ComputeType(v.read, IsServer)
+			if Computed == types.singleton(nil) then
+				continue
+			end
+			New:setproperty(i, Computed)
 		end
 
 		local DictMethods = if IsServerValue then DictMethodsServer else DictMethodsClient
@@ -193,7 +202,6 @@ end
 export type ClientClass<T = any> = {
 	Id: number,
 	read Data: ComputeType<T, false>,
-	Tags: {string},
 	Identifier: string?,
 
 	SignalChanged: Signal.Signal<PathType, any, Action>,
@@ -211,7 +219,6 @@ export type ClientClass<T = any> = {
 export type ServerClass<T = any> = {
 	Id: number,
 	read Data: ComputeType<T, true>,
-	Tags: {string},
 	Identifier: string?,
 
 	SignalChanged: Signal.Signal<PathType, any, Action>,

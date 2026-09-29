@@ -8,8 +8,6 @@ local Shared = require("./Shared")
 
 return {
 	new = function<T>(Identifier: string, Data: T, Player: Player?)
-		Data = Shared.DeepCopy(Data)
-
 		if IsServer and typeof(Player) == "Instance" and Player.ClassName == "Player" then
 			Identifier ..= Player.UserId
 
@@ -21,10 +19,10 @@ return {
 			local Success = Server.WaitForReadyPlayer(Player)
 			assert(Success, `{Identifier}: Wait for player {Player} failed.`)
 
-			local Object = Server.Register({
+			local Object = Server.Register {
 				Identifier = Identifier,
 				Data = Data,
-			})
+			}
 			Object:Subscribe(Player)
 
 			return Object
@@ -41,7 +39,7 @@ return {
 
 	get = function<T>(Identifier: string, DataTemplate: T?, Player: Player?)
 		if Player and IsServer then 
-			return Server.GetFromIdentifier(Identifier .. Player.UserId)
+			return Server.Get(Identifier .. Player.UserId)
 		elseif not IsServer then
 			return Client.Get(Identifier .. Players.LocalPlayer.UserId)
 		end
@@ -56,4 +54,17 @@ return {
 			Client.Init()
 		end
 	end,
+	
+	noCopy = function<T>(Tbl: T & {}) : T
+		local mt: any = getmetatable(Tbl)
+		if type(mt) == "table" then
+			mt[Shared.NoDeepCopyTag] = true
+			
+			return Tbl
+		end
+		
+		return setmetatable(Tbl, {
+			[Shared.NoDeepCopyTag] = true
+		})
+	end
 }

@@ -23,7 +23,7 @@ local TableKeys = {
 }
 
 local Class = {}
-function Class.__index(self: InternalClass, Key)
+function Class.__index(self: InternalClass, Key) : any
 	local Existing = Class[Key]
 	if Existing then
 		return Existing
@@ -55,7 +55,6 @@ export type InternalClass<T = {}> = Shared.ServerClass<T> & {
 	Children: any,
 
 	_creation: {},
-	_raw: {},
 	_changetrack: boolean?,
 }
 
@@ -94,20 +93,20 @@ local ProxyMethods = {
 	Insert = function(Proxy, Value, Index)
 		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
 		local Raw = MakeProxy.GetValue(Proxy)
-
+		
 		Index = Index or #Raw + 1
 		MakeProxy.Insert(Proxy, Value, Index)
-
+		
 		local Path = MakeProxy.TracePath(Proxy)
 		table.insert(Path, Index)
-
-		Value = type(Value) == "table" and Shared.DeepCopy(Value) or Value
+		
+		Value = Shared.DeepCopy(Value)
 		local Info = { Object.Id, Path, Value }
-
+		
 		Object:IterateTargets(function(Player)
 			Shared.Packets.Insert.sendTo(Info, Player)
 		end)
-
+		
 		if Object._changetrack then
 			Object.SignalChanged:Fire(Path, Value, "Insert")
 		end
@@ -115,10 +114,10 @@ local ProxyMethods = {
 	Remove = function(Proxy, Index)
 		local Object = Objects[MakeProxy.GetIdentifier(Proxy)]
 		local Raw = MakeProxy.GetValue(Proxy)
-
+		
 		Index = Index or #Raw
 		MakeProxy.Remove(Proxy, Index)
-
+		
 		local Path = MakeProxy.TracePath(Proxy)
 		table.insert(Path, Index)
 
@@ -144,7 +143,7 @@ local ProxyMethods = {
 
 		local Path = MakeProxy.TracePath(Parent)
 		table.insert(Path, Key)
-		Object:PathSet(Path, Value, MakeProxy.GetValue(Parent))
+		Object:PathSet(Path, Value, Parent)
 
 		return Value
 	end,
@@ -178,29 +177,25 @@ end
 function Server.Register<T>(Props: {
 	Data: T,
 	Identifier: string?,
-	Tags: { string }?,
-	[string]: any,
 }): Shared.ServerClass<T>
 	local Identifier = Props.Identifier
 	local Data = Props.Data
-	local Tags = Props.Tags
 
 	assert(not (Identifier and Identifiers[Identifier]), `Object with identifier {Identifier} already exists.`)
 	assert(type(Data) == "table", "Data is required to be a table.")
 
 	Ids += 1
-
+	Data = Shared.DeepCopy(Data, true)
+	
 	local NewObject = setmetatable({}, Class) :: InternalClass
 	NewObject.Id = Ids
-	NewObject.Identifier = Props.Identifier
-	NewObject.Tags = Tags or {}
+	NewObject.Identifier = Identifier
 
 	NewObject.Active = true
 	NewObject.ReplicateMode = "None"
 
-	NewObject._raw = Data
-	NewObject._creation = { NewObject.Id, NewObject._raw, NewObject.Tags, NewObject.Identifier }
-
+	NewObject._creation = { Ids, Data, Identifier }
+	
 	NewObject.Data = MakeProxy.new(Data, {
 		CallFunction = function(Proxy, ...)
 			if select("#", ...) > 0 then
@@ -214,7 +209,7 @@ function Server.Register<T>(Props: {
 
 				local Path = MakeProxy.TracePath(Parent)
 				table.insert(Path, Key)
-				NewObject:PathSet(Path, Value, MakeProxy.GetValue(Parent))
+				NewObject:PathSet(Path, Value, Parent)
 
 				return Value
 			else
@@ -264,10 +259,11 @@ function Server.WaitForReadyPlayer(Player: Player): boolean?
 end
 
 function Class.PathSet(self: InternalClass, Path: PathType, Value: any, tbl: any)
-	local Pointer = tbl or self:PathGet(Path, 1)
-	Pointer[Path[#Path]] = Value
-
-	Value = type(Value) == "table" and Shared.DeepCopy(Value) or Value -- Ensuring Value is immutable.
+	local Key = Path[#Path]
+	local Pointer = tbl or self:PathGet(Path, 1, nil, true)
+	Pointer[Key] = Value
+	
+	Value = Shared.DeepCopy(Value) -- Ensuring Value is immutable.
 	local Info = { self.Id, Path, Value }
 
 	self:IterateTargets(function(Player)
@@ -279,7 +275,7 @@ function Class.PathSet(self: InternalClass, Path: PathType, Value: any, tbl: any
 	end
 end
 function Class.PathGet(self: InternalClass, Path: PathType, IgnoreLast: number?, notraw: boolean?): any
-	local Data = if notraw then self.Data else self._raw
+	local Data = if notraw then self.Data else self.Data()
 	for i = 1, #Path - (IgnoreLast or 0) do
 		Data = Data[Path[i]]
 	end
@@ -335,9 +331,7 @@ function Class.Subscribe(self: InternalClass, Player: Player)
 	self.ExcludeList[Player] = nil
 
 	local Info = self._creation
-	self:IterateTargets(function(Player)
-		Shared.Packets.ObjectCreated.sendTo(Info, Player)
-	end)
+	Shared.Packets.ObjectCreated.sendTo(Info, Player)
 
 	return self
 end

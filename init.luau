@@ -10,11 +10,11 @@ local Singleton = require("@self/src/Singleton")
 
 export type ServerClass<T = any> = Shared.ServerClass<T>
 export type ClientClass<T = any> = Shared.ClientClass<T>
-
 export type ComputeType<T, IsServer> = Shared.ComputeType<T, IsServer>
 
 type Client = typeof(require("@self/src/Client"))
 type Server = typeof(require("@self/src/Server"))
+type Singleton = typeof(Singleton)
 
 local Lib = {
 	--[=[
@@ -31,10 +31,14 @@ local Lib = {
 		Singleton one instance per-player wrapper, single function simplicity.
 	]=]
 	Singleton = Singleton,
+	
+	NoCopy = Singleton.noCopy,
 } :: {
 	Client: Client,
 	Server: Server,
-	Singleton: typeof(Singleton),
+	Singleton: Singleton,
+	
+	NoCopy: index<Singleton, "noCopy">,
 }
 
 return Lib

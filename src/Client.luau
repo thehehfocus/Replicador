@@ -13,7 +13,6 @@ local SignalKeys = {
 }
 
 local Objects = {} :: { [number]: InternalClass }
-local Tagged = {} :: { [string]: { InternalClass } }
 local Identifiers = {} :: { [string]: Object }
 
 local ObjectAdded = Signal.new() :: Signal.Signal<InternalClass>
@@ -108,7 +107,7 @@ local ProxyMethods = {
 }
 
 --== Script ==--
-local function Register(Id: number, Data: any, Tags: { string }, Identifier: string?)
+local function Register(Id: number, Data: any, Identifier: string?)
 	local Object = setmetatable({}, Class) :: InternalClass
 	Object.Id = Id
 	Object.Data = MakeProxy.new(Data, {
@@ -132,7 +131,6 @@ local function Register(Id: number, Data: any, Tags: { string }, Identifier: str
 		IndexMethods = ProxyMethods,
 		Identifier = Id,
 	})
-	Object.Tags = Tags
 	Object.Identifier = Identifier
 
 	Object.Active = true
@@ -141,13 +139,6 @@ local function Register(Id: number, Data: any, Tags: { string }, Identifier: str
 	Objects[Id] = Object
 	if Identifier then
 		Identifiers[Identifier] = Object
-	end
-
-	for i, Tag in Tags do
-		if not Tagged[Tag] then
-			Tagged[Tag] = {}
-		end
-		Tagged[Tag][Id] = Object
 	end
 
 	ObjectAdded:Fire(Object)
@@ -168,16 +159,6 @@ local function Destroy(Object: InternalClass)
 		Identifiers[Object.Identifier] = nil
 	end
 
-	for i, Tag in Object.Tags do
-		local TagMap = Tagged[Tag]
-		if TagMap then
-			TagMap[Object.Id] = nil
-			if not next(TagMap) then
-				Tagged[Tag] = nil
-			end
-		end
-	end
-
 	for i, v in SignalKeys do
 		local destroySignal = rawget(Object, v)
 		if destroySignal then
@@ -196,15 +177,15 @@ function Client.Init()
 	Shared.Packets.ObjectCreated.listen(function(Info)
 		local Id = Info[1]
 		local Data = Info[2]
-		local Tags = Info[3]
-		local Identifier = Info[4]
+		local Identifier = Info[3]
 
 		if Objects[Id] then
 			return
 		end
 
-		Register(Id, Data, Tags, Identifier)
+		Register(Id, Data, Identifier)
 	end)
+	
 	Shared.Packets.ObjectDestroyed.listen(function(Info)
 		local Id = Info
 
@@ -253,6 +234,7 @@ function Client.Init()
 			Object.SignalChanged:Fire(Path, Value, "Insert")
 		end
 	end)
+	
 	Shared.Packets.Remove.listen(function(Info)
 		local Id = Info[1]
 		local Path = Info[2]
@@ -271,35 +253,12 @@ function Client.Init()
 		end
 	end)
 
-	task.wait()
-	Shared.Packets.RequestData.send()
+	task.defer(Shared.Packets.RequestData.send)
 end
 
 function Client.Get<T>(Identifier: string, DataTemplate: T?): Shared.ClientClass<T>?
 	return Identifiers[Identifier]
 end
-Client.GetTagged = function(Tag: string | { string }, Id: number?): Shared.ClientClass | { Shared.ClientClass }?
-	if type(Tag) == "string" then
-		return if type(Id) == "number" then Tagged[Tag] and Tagged[Tag][Id] else Tagged[Tag] or {}
-	else
-		local Result = {}
-		for i, v in Tag do
-			local Objects = Client.GetTagged(v, Id)
-			if not Objects then
-				continue
-			end
-
-			for i, v in Objects do
-				if table.find(Result, v) then
-					continue
-				end
-
-				table.insert(Result, v)
-			end
-		end
-		return Result
-	end
-end :: ((Tag: string) -> { Shared.ClientClass }) & ((Tags: { string }) -> { Shared.ClientClass }) & ((Tag: string, Id: number) -> Shared.ClientClass?)
 
 local function IdentifierImpl(Identifier: string, Callback)
 	return function(Class: InternalClass)
@@ -328,59 +287,6 @@ function Client.OnRemoved(Identifier: string, Callback: (Removed: Shared.ClientC
 	return ObjectRemoved:Connect(IdentifierImpl(Identifier, Callback))
 end
 
-local function TaggedImpl(Tags: string | { string }, Callback)
-	if type(Tags) == "string" then
-		return function(Class)
-			if not Client.GetTagged(Tags, Class.Id) then
-				return false
-			end
-
-			if Callback then
-				Callback(Class)
-			end
-			return true
-		end
-	else
-		return function(Class)
-			local Has = true
-			for i, v in Tags do
-				Has = Client.GetTagged(v, Class.Id)
-				if not Has then
-					return false
-				end
-			end
-
-			if Callback then
-				Callback(Class)
-			end
-			return true
-		end
-	end
-end
-function Client.OnNewTagged(
-	Tags: string | { string },
-	Callback: (New: InternalClass) -> (),
-	CallOnExisting: boolean?
-): Signal.Connection
-	local Handler = TaggedImpl(Tags, Callback)
-
-	if CallOnExisting then
-		for i, v in Client.GetTagged(Tags) do
-			Handler(v)
-		end
-	end
-
-	return ObjectAdded:Connect(Handler)
-end
-function Client.OnRemovedTagged(
-	Tags: string | { string },
-	Callback: (Removed: Shared.ClientClass) -> ()
-): Signal.Connection
-	local Handler = TaggedImpl(Tags, Callback)
-
-	return ObjectRemoved:Connect(Handler)
-end
-
 function Client.AwaitFor<T>(Identifier: string, DataTemplate: T?): Shared.ClientClass<T>
 	local Already = Client.Get(Identifier)
 	if Already then
@@ -388,16 +294,6 @@ function Client.AwaitFor<T>(Identifier: string, DataTemplate: T?): Shared.Client
 	end
 
 	return ObjectAdded:Wait(IdentifierImpl(Identifier))
-end
-function Client.AwaitForTagged<T>(Tags: string | { string }, DataTemplate: T?): Shared.ClientClass<T>
-	local Already = Client.GetTagged(Tags)
-
-	local _, _nextAlready = next(Already)
-	if _nextAlready then
-		return _nextAlready
-	end
-
-	return ObjectAdded:Wait(Tags, TaggedImpl(Tags))
 end
 
 function Class.PathSet(self: InternalClass, Path: { PathType }, Value: any)

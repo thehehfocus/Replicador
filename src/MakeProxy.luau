@@ -1,5 +1,4 @@
 --!optimize 2
---!strict
 
 local Module = {}
 
@@ -55,7 +54,7 @@ local function Set(Proxy: Proxy, Key: any, Value: any)
 		OldValue = OriginalValue[Key]
 		OriginalValue[Key] = Value
 	end
-
+	
 	local Child = Children and Children[Key]
 	if Child then
 		rawset(Child, ORIG_KEY, Value)

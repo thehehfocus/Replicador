@@ -18,7 +18,7 @@ export type CustomFunction<Send = any, Receive = any> = {
 
 function Module.RegisterEvent(Name: string, Unreliable: boolean?) : CustomEvent
 	if IsServer then
-		local Event = if Unreliable then Instance.new("UnreliableRemoteEvent") else Instance.new("RemoteEvent")
+		local Event = RemoteFolder:FindFirstChild(Name) or if Unreliable then Instance.new("UnreliableRemoteEvent") else Instance.new("RemoteEvent")
 		Event.Name = Name
 		Event.Parent = RemoteFolder
 		return {
@@ -46,7 +46,7 @@ end
 
 function Module.RegisterFunction(Name: string) : CustomFunction
 	if IsServer then
-		local Event = Instance.new("RemoteFunction")
+		local Event = RemoteFolder:FindFirstChild(Name) or Instance.new("RemoteFunction")
 		Event.Name = Name
 		Event.Parent = RemoteFolder
 		return {
